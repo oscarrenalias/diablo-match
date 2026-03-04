@@ -1,9 +1,18 @@
 import Phaser from "phaser";
 import { BOARD_HEIGHT, BOARD_WIDTH } from "../game/constants.js";
 import { createGameEngine } from "../game/engine.js";
+import { BoardEffects } from "../ui/BoardEffects.js";
+import { CombatHUD } from "../ui/CombatHUD.js";
 
 const TILE_SIZE = 64;
 const TILE_GAP = 4;
+
+const DEPTH_BOARD = 10;
+const DEPTH_BOARD_FRAME = 12;
+const DEPTH_OVERLAY = 14;
+const DEPTH_EFFECTS = 22;
+const DEPTH_HUD = 30;
+const DEPTH_DEV_PANEL = 60;
 
 const SWAP_MS = 90;
 const INVALID_OUT_MS = 80;
@@ -30,12 +39,15 @@ function downloadTextFile(name, text) {
   URL.revokeObjectURL(url);
 }
 
+function capWord(value) {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
 export class PrototypeScene extends Phaser.Scene {
   constructor() {
     super("prototype-scene");
     this.engine = null;
     this.selectedIndex = null;
-    this.debugVisible = true;
     this.savedReplay = null;
     this.logLevels = ["DEBUG", "INFO", "WARN", "ERROR"];
     this.logLevelIndex = 1;
@@ -47,6 +59,11 @@ export class PrototypeScene extends Phaser.Scene {
 
     this.isAnimatingBoard = false;
     this.pendingResize = false;
+
+    this.lastProcessedEventIndex = 0;
+    this.activeEnemyId = null;
+
+    this.devPanelVisible = true;
   }
 
   preload() {
@@ -55,20 +72,32 @@ export class PrototypeScene extends Phaser.Scene {
       "/assets/generated/tiles-atlas.png",
       "/assets/generated/tiles-atlas.json",
     );
+
+    this.load.atlas(
+      "ui-portraits-atlas",
+      "/assets/generated/atlas/ui-portraits-atlas.png",
+      "/assets/generated/atlas/ui-portraits-atlas.json",
+    );
   }
 
   create() {
     this.cameras.main.setBackgroundColor("#12161f");
     this.textures.get("tiles-atlas").setFilter(Phaser.Textures.FilterMode.NEAREST);
 
+    if (this.textures.exists("ui-portraits-atlas")) {
+      this.textures.get("ui-portraits-atlas").setFilter(Phaser.Textures.FilterMode.NEAREST);
+    }
+
     this.createEngine(this.currentClass);
-    this.createHud();
     this.initBoardSprites();
+    this.createHudSystems();
+    this.createDevPanel();
+    this.processNewEngineEvents();
     this.refreshHud();
 
     this.input.keyboard.on("keydown-D", () => {
-      this.debugVisible = !this.debugVisible;
-      this.refreshHud();
+      this.devPanelVisible = !this.devPanelVisible;
+      this.devPanel.setVisible(this.devPanelVisible);
     });
 
     this.scale.on("resize", () => {
@@ -78,7 +107,8 @@ export class PrototypeScene extends Phaser.Scene {
       }
 
       this.layoutBoard();
-      this.layoutPanels();
+      this.layoutHud();
+      this.layoutDevPanel();
       this.refreshHud();
     });
   }
@@ -91,198 +121,35 @@ export class PrototypeScene extends Phaser.Scene {
       logLevel: this.logLevels[this.logLevelIndex],
     });
     this.selectedIndex = null;
-  }
-
-  createButton(x, y, label, onClick, width = 120, fill = 0x283040) {
-    const bg = this.add
-      .rectangle(x, y, width, 28, fill)
-      .setOrigin(0)
-      .setStrokeStyle(1, 0x56617a)
-      .setInteractive({ useHandCursor: true })
-      .on("pointerup", onClick);
-
-    const text = this.add
-      .text(x + width / 2, y + 14, label, {
-        fontFamily: "Trebuchet MS",
-        fontSize: "12px",
-        color: "#e5e8ee",
-      })
-      .setOrigin(0.5);
-
-    return [bg, text];
-  }
-
-  createHud() {
-    this.hudNodes = [];
-
-    this.titleText = this.add.text(16, 10, "Diablo Match Prototype", {
-      fontFamily: "Trebuchet MS",
-      fontSize: "22px",
-      color: "#dde1e8",
-    });
-
-    this.statusText = this.add.text(16, 36, "", {
-      fontFamily: "Trebuchet MS",
-      fontSize: "14px",
-      color: "#b8c1d4",
-    });
-
-    this.turnText = this.add.text(16, 58, "", {
-      fontFamily: "Trebuchet MS",
-      fontSize: "13px",
-      color: "#e2dfd7",
-    });
-
-    this.playerPanel = this.add.text(16, 82, "", {
-      fontFamily: "Trebuchet MS",
-      fontSize: "13px",
-      color: "#f0f1f4",
-      lineSpacing: 3,
-    });
-
-    this.enemyPanel = this.add.text(16, 138, "", {
-      fontFamily: "Trebuchet MS",
-      fontSize: "13px",
-      color: "#f0d3d3",
-      lineSpacing: 3,
-    });
-
-    const buttonRowY = 204;
-
-    this.hudNodes.push(
-      ...this.createButton(16, buttonRowY, "Cast Spell", () => this.onCastSpell(), 100),
-      ...this.createButton(122, buttonRowY, "Skip Spell", () => this.onSkipSpell(), 100),
-      ...this.createButton(228, buttonRowY, "Export Logs", () => this.onExportLogs(), 100),
-      ...this.createButton(334, buttonRowY, "Save Replay", () => this.onSaveReplay(), 100),
-      ...this.createButton(440, buttonRowY, "Run Replay", () => this.onRunReplay(), 100),
-    );
-
-    const classRowY = 236;
-    this.hudNodes.push(
-      ...this.createButton(16, classRowY, "Warrior", () => this.onChangeClass("warrior"), 90, 0x3a4b2d),
-      ...this.createButton(112, classRowY, "Wizard", () => this.onChangeClass("wizard"), 90, 0x2d3f5b),
-      ...this.createButton(208, classRowY, "Assassin", () => this.onChangeClass("assassin"), 90, 0x4c2d4b),
-      ...this.createButton(304, classRowY, "Toggle Debug", () => this.onToggleDebug(), 110),
-      ...this.createButton(420, classRowY, "Log Level", () => this.onCycleLogLevel(), 90),
-    );
-
-    const logPanelWidth = 310;
-    const logPanelHeight = 240;
-    const panelHeaderHeight = 24;
-    const logBg = this.add
-      .rectangle(0, 0, logPanelWidth, logPanelHeight, 0x1a1f2c, 0.92)
-      .setOrigin(0)
-      .setStrokeStyle(1, 0x44506a);
-    const logHeader = this.add
-      .rectangle(0, 0, logPanelWidth, panelHeaderHeight, 0x26344b, 1)
-      .setOrigin(0)
-      .setStrokeStyle(1, 0x5d7394);
-    const logHeaderLabel = this.add.text(8, 5, "Combat Log (drag here)", {
-      fontFamily: "Trebuchet MS",
-      fontSize: "12px",
-      color: "#dde7f7",
-    });
-
-    this.combatLogText = this.add.text(8, panelHeaderHeight + 6, "", {
-      fontFamily: "Trebuchet MS",
-      fontSize: "12px",
-      color: "#bcc4d3",
-      lineSpacing: 2,
-      wordWrap: { width: logPanelWidth - 16, useAdvancedWrap: true },
-    });
-
-    this.combatLogPanel = this.add
-      .container(24, 300, [logBg, logHeader, logHeaderLabel, this.combatLogText])
-      .setDepth(30);
-    this.combatLogPanel.setSize(logPanelWidth, logPanelHeight);
-    logHeader.setInteractive(
-      new Phaser.Geom.Rectangle(0, 0, logPanelWidth, panelHeaderHeight),
-      Phaser.Geom.Rectangle.Contains,
-    );
-    this.input.setDraggable(logHeader, true);
-    logHeader.on("drag", (pointer, dragX, dragY) => {
-      const maxX = this.scale.width - logPanelWidth;
-      const maxY = this.scale.height - logPanelHeight;
-      this.combatLogPanel.x = Phaser.Math.Clamp(dragX, 0, maxX);
-      this.combatLogPanel.y = Phaser.Math.Clamp(dragY, 0, maxY);
-    });
-
-    const debugPanelWidth = 270;
-    const debugPanelHeight = 150;
-    const debugBg = this.add
-      .rectangle(0, 0, debugPanelWidth, debugPanelHeight, 0x182022, 0.92)
-      .setOrigin(0)
-      .setStrokeStyle(1, 0x4e6c6e);
-    const debugHeader = this.add
-      .rectangle(0, 0, debugPanelWidth, panelHeaderHeight, 0x21444b, 1)
-      .setOrigin(0)
-      .setStrokeStyle(1, 0x4e8c92);
-    const debugHeaderLabel = this.add.text(8, 5, "Debug Overlay (drag here)", {
-      fontFamily: "Trebuchet MS",
-      fontSize: "12px",
-      color: "#d8f6ef",
-    });
-
-    this.debugText = this.add.text(8, panelHeaderHeight + 6, "", {
-      fontFamily: "monospace",
-      fontSize: "11px",
-      color: "#93d5c7",
-      lineSpacing: 2,
-      wordWrap: { width: debugPanelWidth - 16, useAdvancedWrap: true },
-    });
-
-    this.debugPanel = this.add
-      .container(340, 20, [debugBg, debugHeader, debugHeaderLabel, this.debugText])
-      .setDepth(31);
-    this.debugPanel.setSize(debugPanelWidth, debugPanelHeight);
-    debugHeader.setInteractive(
-      new Phaser.Geom.Rectangle(0, 0, debugPanelWidth, panelHeaderHeight),
-      Phaser.Geom.Rectangle.Contains,
-    );
-    this.input.setDraggable(debugHeader, true);
-    debugHeader.on("drag", (pointer, dragX, dragY) => {
-      const maxX = this.scale.width - debugPanelWidth;
-      const maxY = this.scale.height - debugPanelHeight;
-      this.debugPanel.x = Phaser.Math.Clamp(dragX, 0, maxX);
-      this.debugPanel.y = Phaser.Math.Clamp(dragY, 0, maxY);
-    });
-
-    this.summaryText = this.add.text(350, 560, "", {
-      fontFamily: "Trebuchet MS",
-      fontSize: "12px",
-      color: "#f2deb0",
-      lineSpacing: 2,
-    });
-
-    this.layoutPanels();
-  }
-
-  layoutPanels() {
-    if (this.combatLogPanel) {
-      const maxX = this.scale.width - this.combatLogPanel.width;
-      const maxY = this.scale.height - this.combatLogPanel.height;
-      this.combatLogPanel.x = Phaser.Math.Clamp(this.combatLogPanel.x, 0, maxX);
-      this.combatLogPanel.y = Phaser.Math.Clamp(this.combatLogPanel.y, 0, maxY);
-    }
-
-    if (this.debugPanel) {
-      const maxX = this.scale.width - this.debugPanel.width;
-      const maxY = this.scale.height - this.debugPanel.height;
-      this.debugPanel.x = Phaser.Math.Clamp(this.debugPanel.x, 0, maxX);
-      this.debugPanel.y = Phaser.Math.Clamp(this.debugPanel.y, 0, maxY);
-    }
-
-    if (this.summaryText) {
-      this.summaryText.x = Math.max(16, this.scale.width - 220);
-      this.summaryText.y = Math.max(560, this.scale.height - 100);
-    }
+    this.lastProcessedEventIndex = 0;
+    this.activeEnemyId = this.engine.state.enemy?.id ?? null;
   }
 
   getBoardStart() {
     const totalWidth = BOARD_WIDTH * TILE_SIZE + (BOARD_WIDTH - 1) * TILE_GAP;
+    const isNarrow = this.scale.width < 900;
+    const y = isNarrow ? 220 : 300;
+
     return {
-      x: (this.scale.width - totalWidth) / 2,
-      y: 300,
+      x: Math.round((this.scale.width - totalWidth) / 2),
+      y,
+    };
+  }
+
+  getBoardRect() {
+    const start = this.getBoardStart();
+    const width = BOARD_WIDTH * TILE_SIZE + (BOARD_WIDTH - 1) * TILE_GAP;
+    const height = BOARD_HEIGHT * TILE_SIZE + (BOARD_HEIGHT - 1) * TILE_GAP;
+
+    return {
+      x: start.x,
+      y: start.y,
+      width,
+      height,
+      right: start.x + width,
+      bottom: start.y + height,
+      cx: start.x + width / 2,
+      cy: start.y + height / 2,
     };
   }
 
@@ -304,6 +171,93 @@ export class PrototypeScene extends Phaser.Scene {
     };
   }
 
+  createDevButton(container, x, y, label, handler, width = 108) {
+    const bg = this.add
+      .rectangle(x, y, width, 24, 0x212732, 1)
+      .setOrigin(0)
+      .setStrokeStyle(1, 0x5e6982)
+      .setInteractive({ useHandCursor: true })
+      .on("pointerup", handler)
+      .setDepth(DEPTH_DEV_PANEL + 1);
+
+    const text = this.add
+      .text(x + width / 2, y + 12, label, {
+        fontFamily: "Trebuchet MS",
+        fontSize: "11px",
+        color: "#e6ebf5",
+      })
+      .setOrigin(0.5)
+      .setDepth(DEPTH_DEV_PANEL + 1);
+
+    container.add([bg, text]);
+  }
+
+  createDevPanel() {
+    this.devPanel = this.add.container(12, 8).setDepth(DEPTH_DEV_PANEL);
+
+    const bg = this.add
+      .rectangle(0, 0, 454, 92, 0x131821, 0.95)
+      .setOrigin(0)
+      .setStrokeStyle(1, 0x5a6070)
+      .setDepth(DEPTH_DEV_PANEL);
+
+    this.devText = this.add
+      .text(8, 6, "", {
+        fontFamily: "monospace",
+        fontSize: "11px",
+        color: "#92d5c8",
+      })
+      .setDepth(DEPTH_DEV_PANEL + 1);
+
+    this.devPanel.add([bg, this.devText]);
+
+    this.createDevButton(this.devPanel, 8, 56, "Export Logs", () => this.onExportLogs(), 84);
+    this.createDevButton(this.devPanel, 96, 56, "Save Replay", () => this.onSaveReplay(), 84);
+    this.createDevButton(this.devPanel, 184, 56, "Run Replay", () => this.onRunReplay(), 84);
+    this.createDevButton(this.devPanel, 272, 56, "Warrior", () => this.onChangeClass("warrior"), 58);
+    this.createDevButton(this.devPanel, 334, 56, "Wizard", () => this.onChangeClass("wizard"), 54);
+    this.createDevButton(this.devPanel, 392, 56, "Assassin", () => this.onChangeClass("assassin"), 54);
+  }
+
+  layoutDevPanel() {
+    if (!this.devPanel) {
+      return;
+    }
+
+    this.devPanel.x = 12;
+    this.devPanel.y = 8;
+  }
+
+  createHudSystems() {
+    const boardRect = this.getBoardRect();
+
+    this.hud = new CombatHUD(this, {
+      boardRect,
+      heroClass: this.engine.state.player.classId,
+      enemyId: this.engine.state.enemy?.id,
+      depth: DEPTH_HUD,
+    });
+
+    this.hud.setSpellButtons({
+      onCastPrimary: () => this.onCastSpell(),
+    });
+
+    this.boardEffects = new BoardEffects(this, boardRect, DEPTH_EFFECTS);
+    this.layoutHud();
+  }
+
+  layoutHud() {
+    const boardRect = this.getBoardRect();
+    if (this.hud) {
+      this.hud.setBoardRect(boardRect);
+      this.hud.layout({ width: this.scale.width, height: this.scale.height }, boardRect);
+    }
+
+    if (this.boardEffects) {
+      this.boardEffects.setBoardRect(boardRect);
+    }
+  }
+
   initBoardSprites() {
     for (const sprite of this.baseTileSprites) {
       sprite.destroy();
@@ -322,6 +276,7 @@ export class PrototypeScene extends Phaser.Scene {
       const sprite = this.add
         .image(center.x, center.y, "tiles-atlas", "weapon")
         .setDisplaySize(TILE_SIZE, TILE_SIZE)
+        .setDepth(DEPTH_BOARD)
         .setInteractive({ useHandCursor: true })
         .on("pointerup", () => this.onTileTap(index));
 
@@ -330,7 +285,7 @@ export class PrototypeScene extends Phaser.Scene {
         .setOrigin(0)
         .setFillStyle(0x000000, 0)
         .setStrokeStyle(2, 0x293242)
-        .setDepth(2);
+        .setDepth(DEPTH_BOARD_FRAME);
 
       this.baseTileSprites.push(sprite);
       this.baseTileFrames.push(frame);
@@ -406,7 +361,7 @@ export class PrototypeScene extends Phaser.Scene {
     return this.add
       .image(center.x, center.y, "tiles-atlas", tileType)
       .setDisplaySize(TILE_SIZE, TILE_SIZE)
-      .setDepth(10)
+      .setDepth(DEPTH_OVERLAY)
       .setAlpha(1)
       .setScale(1);
   }
@@ -478,7 +433,21 @@ export class PrototypeScene extends Phaser.Scene {
     this.applyViewBoardToBaseSprites();
   }
 
+  logLineForMatch(match, boardBefore) {
+    const tileType = boardBefore[match[0]];
+    const tile = capWord(String(tileType ?? "tile"));
+    return `${match.length}x ${tile} match`;
+  }
+
   async animateCascadeStep(cascade) {
+    if (cascade.multiplier > 1 && this.boardEffects) {
+      this.boardEffects.showCombo(cascade.multiplier);
+    }
+
+    for (const match of cascade.matches) {
+      this.hud?.pushCombatLog(this.logLineForMatch(match, cascade.boardBefore));
+    }
+
     const clearOverlays = [];
     for (const index of cascade.clearedIndices) {
       const tileType = cascade.boardBefore[index];
@@ -552,7 +521,7 @@ export class PrototypeScene extends Phaser.Scene {
       const overlay = this.add
         .image(target.x, target.y - (TILE_SIZE + TILE_GAP), "tiles-atlas", spawn.tile)
         .setDisplaySize(TILE_SIZE, TILE_SIZE)
-        .setDepth(10)
+        .setDepth(DEPTH_OVERLAY)
         .setAlpha(0)
         .setScale(0.85);
 
@@ -640,7 +609,8 @@ export class PrototypeScene extends Phaser.Scene {
     if (this.pendingResize) {
       this.pendingResize = false;
       this.layoutBoard();
-      this.layoutPanels();
+      this.layoutHud();
+      this.layoutDevPanel();
       this.refreshHud();
     }
   }
@@ -654,7 +624,12 @@ export class PrototypeScene extends Phaser.Scene {
     const result = this.engine.playerCastSpell(spellId);
     if (!result.ok) {
       this.engine.state.statusText = `Spell failed: ${result.reason}`;
+    } else {
+      this.hud?.setHeroState("cast");
+      this.hud?.pushCombatLog(`Cast ${spellId}`);
     }
+
+    this.processNewEngineEvents();
     this.refreshHud();
   }
 
@@ -703,11 +678,6 @@ export class PrototypeScene extends Phaser.Scene {
     this.refreshHud();
   }
 
-  onToggleDebug() {
-    this.debugVisible = !this.debugVisible;
-    this.refreshHud();
-  }
-
   onCycleLogLevel() {
     this.logLevelIndex = (this.logLevelIndex + 1) % this.logLevels.length;
     this.engine.setLogLevel(this.logLevels[this.logLevelIndex]);
@@ -722,7 +692,20 @@ export class PrototypeScene extends Phaser.Scene {
 
     this.createEngine(classId);
     this.engine.state.statusText = `Started new run as ${classId}.`;
+
     this.initBoardSprites();
+
+    if (this.hud) {
+      this.hud.destroy();
+      this.hud = null;
+    }
+    if (this.boardEffects) {
+      this.boardEffects.destroy();
+      this.boardEffects = null;
+    }
+
+    this.createHudSystems();
+    this.processNewEngineEvents();
     this.refreshHud();
   }
 
@@ -773,12 +756,14 @@ export class PrototypeScene extends Phaser.Scene {
         this.unlockBoardInput();
       }
 
+      this.processNewEngineEvents();
       this.refreshHud();
       return;
     }
 
     this.lockBoardInput();
     await this.animateResolvedSwap(result);
+    this.processNewEngineEvents();
     this.refreshHud();
 
     if (!this.engine.state.gameOver && this.engine.state.turnOwner === "enemy") {
@@ -786,6 +771,8 @@ export class PrototypeScene extends Phaser.Scene {
       if (enemyTurn?.didMove && enemyTurn.resolved?.ok) {
         await this.animateResolvedSwap(enemyTurn.resolved);
       }
+
+      this.processNewEngineEvents();
     }
 
     this.unlockBoardInput();
@@ -793,64 +780,109 @@ export class PrototypeScene extends Phaser.Scene {
     this.refreshHud();
   }
 
+  processNewEngineEvents() {
+    const events = this.engine.state.logger.getEvents();
+    const startIndex = this.lastProcessedEventIndex;
+
+    for (let i = startIndex; i < events.length; i += 1) {
+      const event = events[i];
+      const { type, payload } = event;
+
+      if (type === "spell_cast" && payload.caster === this.engine.state.player.name) {
+        this.hud?.setHeroState("cast");
+        this.hud?.pushCombatLog(`Spell: ${payload.spellId}`);
+      }
+
+      if (type === "damage_application") {
+        const dmg = payload.detail?.damage?.finalDamage ?? 0;
+        if (dmg > 0) {
+          const targetIsPlayer = payload.to === this.engine.state.player.name;
+          this.boardEffects?.showDamage(dmg, targetIsPlayer ? "hero" : "enemy");
+          this.hud?.pushCombatLog(`${payload.by} -> ${payload.to}: ${dmg} dmg`);
+
+          if (targetIsPlayer) {
+            this.hud?.setHeroState("hurt");
+          }
+        }
+      }
+
+      if (type === "resource_change") {
+        const delta = payload.delta ?? {};
+        if ((delta.gold ?? 0) > 0) {
+          this.hud?.setHeroState("coin");
+          this.hud?.pushCombatLog(`Gold +${delta.gold}`);
+        }
+      }
+
+      if (type === "encounter_victory") {
+        this.hud?.setHeroState("victory");
+        this.hud?.pushCombatLog("Victory!");
+      }
+
+      if (type === "encounter_start") {
+        const enemyId = this.engine.state.enemy?.id;
+        if (enemyId && enemyId !== this.activeEnemyId) {
+          this.activeEnemyId = enemyId;
+          this.hud?.resetHeroForEncounter();
+          this.hud?.setEnemyPortrait(enemyId);
+          this.hud?.clearCombatLog();
+          this.hud?.pushCombatLog(`Encounter: ${this.engine.state.enemy.name}`);
+        }
+      }
+
+      if (type === "match_resolved") {
+        const tile = capWord(String(payload.tileType ?? "tile"));
+        this.hud?.pushCombatLog(`${payload.size}x ${tile}`);
+      }
+    }
+
+    this.lastProcessedEventIndex = events.length;
+  }
+
   refreshHud() {
     const snapshot = this.engine.getDebugSnapshot();
+    this.layoutHud();
 
-    this.statusText.setText(this.engine.state.statusText || "Spell -> Swap -> Resolve -> Enemy");
-    this.turnText.setText(`Turn: ${snapshot.turnOwner.toUpperCase()} (${snapshot.turnPhase}) | Class: ${this.currentClass}`);
+    if (this.hud) {
+      this.hud.updateVitals({
+        hero: {
+          hp: snapshot.player.hp,
+          maxHp: snapshot.player.maxHp,
+          mana: snapshot.player.mana,
+          maxMana: 30,
+          armor: snapshot.player.armor,
+          name: snapshot.player.name,
+        },
+        enemy: {
+          hp: snapshot.enemy.hp,
+          maxHp: snapshot.enemy.maxHp,
+          mana: snapshot.enemy.mana,
+          maxMana: 10,
+          armor: snapshot.enemy.armor,
+          name: snapshot.enemy.name,
+        },
+      });
 
-    this.playerPanel.setText(
-      `Player ${snapshot.player.name}\nHP ${shortNum(snapshot.player.hp)}/${shortNum(snapshot.player.maxHp)}  Mana ${shortNum(snapshot.player.mana)}  Armor ${shortNum(snapshot.player.armor)}\nSkill ${shortNum(snapshot.player.skillCharge)}  Gold ${shortNum(snapshot.player.gold)}  Cooldowns ${JSON.stringify(snapshot.player.cooldowns)}`,
-    );
+      this.hud.setTurnPhaseLabel(`${snapshot.turnOwner.toUpperCase()} - ${snapshot.turnPhase.toUpperCase()}`);
 
-    this.enemyPanel.setText(
-      `Enemy ${snapshot.enemy.name}\nHP ${shortNum(snapshot.enemy.hp)}/${shortNum(snapshot.enemy.maxHp)}  Mana ${shortNum(snapshot.enemy.mana)}  Armor ${shortNum(snapshot.enemy.armor)}\nEffects ${JSON.stringify(snapshot.enemy.effects)}`,
-    );
-
-    const events = this.engine.state.logger.getEvents();
-    const readable = events
-      .slice(-10)
-      .map((event) => `${event.index}. ${event.type}`)
-      .join("\n");
-
-    this.combatLogText.setText(`Combat Log\n${readable}`);
-
-    this.debugPanel.setVisible(this.debugVisible);
-    if (this.debugVisible) {
-      this.debugText.setText(
-        [
-          `DEBUG OVERLAY (D to toggle)`,
-          `seed=${snapshot.seed}`,
-          `boardHash=${snapshot.boardHash}`,
-          `turnOwner=${snapshot.turnOwner}`,
-          `phase=${snapshot.turnPhase}`,
-          `cascade=${snapshot.cascadeLevel} x${snapshot.cascadeMultiplier}`,
-          `delta=${JSON.stringify(snapshot.resourceDelta)}`,
-          `lastMove=${snapshot.lastMove}`,
-          `logLevel=${this.logLevels[this.logLevelIndex]}`,
-          `animating=${this.isAnimatingBoard}`,
-        ].join("\n"),
-      );
+      if (this.activeEnemyId !== this.engine.state.enemy?.id) {
+        this.activeEnemyId = this.engine.state.enemy?.id ?? null;
+        if (this.activeEnemyId) {
+          this.hud.setEnemyPortrait(this.activeEnemyId);
+        }
+      }
     }
 
-    if (this.engine.state.gameOver) {
-      this.summaryText.setText(
-        [
-          "Game Over",
-          `Enemies defeated: ${this.engine.state.metrics.enemiesDefeated}`,
-          `Damage dealt: ${this.engine.state.metrics.totalDamageDealt}`,
-          `Damage taken: ${this.engine.state.metrics.totalDamageTaken}`,
-        ].join("\n"),
-      );
-    } else {
-      this.summaryText.setText(
-        [
-          "Run Summary",
-          `Enemies defeated: ${this.engine.state.metrics.enemiesDefeated}`,
-          `Damage dealt: ${this.engine.state.metrics.totalDamageDealt}`,
-          `Damage taken: ${this.engine.state.metrics.totalDamageTaken}`,
-        ].join("\n"),
-      );
-    }
+    this.devText.setText(
+      [
+        `status=${this.engine.state.statusText || "ready"}`,
+        `seed=${snapshot.seed} class=${this.currentClass}`,
+        `turn=${snapshot.turnOwner}/${snapshot.turnPhase} anim=${this.isAnimatingBoard}`,
+        `boardHash=${snapshot.boardHash}`,
+        `cascade=${snapshot.cascadeLevel} x${snapshot.cascadeMultiplier}`,
+        `delta=${JSON.stringify(snapshot.resourceDelta)}`,
+        `log=${this.logLevels[this.logLevelIndex]}`,
+      ].join("\n"),
+    );
   }
 }

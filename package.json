@@ -6,7 +6,8 @@
   "scripts": {
     "build:tiles": "node tools/process-tiles.mjs",
     "build:atlas": "node tools/build-tiles-atlas.mjs",
-    "build:assets": "npm run build:tiles && npm run build:atlas",
+    "build:ui-atlas": "node tools/build-ui-atlas.mjs",
+    "build:assets": "npm run build:tiles && npm run build:atlas && npm run build:ui-atlas",
     "predev": "npm run build:assets",
     "prebuild": "npm run build:assets",
     "dev": "vite",
@@ -19,6 +20,7 @@
     "phaser": "^3.90.0"
   },
   "devDependencies": {
+    "free-tex-packer-core": "^0.3.5",
     "sharp": "^0.34.5",
     "vite": "^7.3.1",
     "vitest": "^4.0.18"
