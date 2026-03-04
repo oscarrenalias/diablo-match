@@ -1,0 +1,26 @@
+{
+  "name": "diablo-match",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:tiles": "node tools/process-tiles.mjs",
+    "build:atlas": "node tools/build-tiles-atlas.mjs",
+    "build:assets": "npm run build:tiles && npm run build:atlas",
+    "predev": "npm run build:assets",
+    "prebuild": "npm run build:assets",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "phaser": "^3.90.0"
+  },
+  "devDependencies": {
+    "sharp": "^0.34.5",
+    "vite": "^7.3.1",
+    "vitest": "^4.0.18"
+  }
+}
