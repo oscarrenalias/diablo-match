@@ -1,55 +1,62 @@
-# Diablo Match Prototype
+# Diablo Match
 
-## Portrait Asset Workflow
+A small action-puzzle game prototype inspired by dark fantasy dungeon crawlers and match-style combat.
 
-Add portrait PNGs under:
+## What This Repository Is
 
-- `assets/sources/portraits/<name>/<state>.png`
+This repository contains an early playable prototype where you fight enemies through tile matches.
 
-Examples:
+The goal of the project is to explore a game concept that combines:
+- Fast match-based decision making
+- RPG-style combat pressure
+- A dark, Diablo-inspired tone and presentation
 
-- `assets/sources/portraits/warrior/idle.png`
-- `assets/sources/portraits/warrior/hurt.png`
-- `assets/sources/portraits/skeleton/idle.png`
+## Current Scope
 
-### Build Portrait Atlas
+This is a prototype, not a finished game.
 
-Run:
+What currently exists:
+- A playable combat loop
+- Enemy encounters and combat feedback
+- Core systems under active iteration
+
+What to expect:
+- Frequent changes
+- Placeholder or in-progress content
+- Ongoing balancing and UX improvements
+
+## Project Goals
+
+The near-term focus is to validate whether the core loop is fun, readable, and worth expanding into a larger game.
+
+Longer-term, this repo is intended to become the public foundation for a fuller indie project.
+
+## Run Locally
+
+Requirements:
+- Node.js 18+
+- npm
+
+Setup and run:
 
 ```bash
-npm run build:ui-atlas
+npm install
+npm run dev
 ```
 
-This generates:
-
-- `public/assets/generated/atlas/ui-portraits-atlas.png`
-- `public/assets/generated/atlas/ui-portraits-atlas.json`
-
-The full asset pipeline can be run with:
+Create a production build:
 
 ```bash
-npm run build:assets
+npm run build
+npm run preview
 ```
 
-## HUD Trigger API (Scene Integration)
+Run automated tests:
 
-The combat HUD exposes these methods:
+```bash
+npm test
+```
 
-- `setHeroState(eventName)`
-- `setEnemyPortrait(enemyIdOrFolder)`
-- `updateVitals({ hero, enemy })`
-- `pushCombatLog(line)`
-- `setTurnPhaseLabel(text)`
+## Status
 
-Current scene integrations:
-
-- Player cast -> `setHeroState("cast")`
-- Player hurt -> `setHeroState("hurt")`
-- Gold gain -> `setHeroState("coin")`
-- Victory -> `setHeroState("victory")`
-- Enemy swap/damage/match/cascade -> combat log lines + floating board text
-
-## Notes
-
-- If class-specific hero portraits are missing, HUD falls back to `warrior` portraits.
-- Enemy portrait folder mapping is explicit for current enemy IDs.
+Active prototype development.
