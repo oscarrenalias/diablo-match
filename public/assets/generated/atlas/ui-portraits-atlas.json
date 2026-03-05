@@ -192,7 +192,7 @@
         "y": 0.5
       }
     },
-    "portraits/warrior/hurt": {
+    "portraits/warrior/dead": {
       "frame": {
         "x": 3,
         "y": 3123,
@@ -216,7 +216,7 @@
         "y": 0.5
       }
     },
-    "portraits/warrior/idle": {
+    "portraits/warrior/hurt": {
       "frame": {
         "x": 3,
         "y": 3513,
@@ -240,7 +240,7 @@
         "y": 0.5
       }
     },
-    "portraits/warrior/lowhp": {
+    "portraits/warrior/idle": {
       "frame": {
         "x": 393,
         "y": 3,
@@ -264,9 +264,33 @@
         "y": 0.5
       }
     },
-    "portraits/warrior/victory": {
+    "portraits/warrior/lowhp": {
       "frame": {
         "x": 783,
+        "y": 3,
+        "w": 384,
+        "h": 384
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 384,
+        "h": 384
+      },
+      "sourceSize": {
+        "w": 384,
+        "h": 384
+      },
+      "pivot": {
+        "x": 0.5,
+        "y": 0.5
+      }
+    },
+    "portraits/warrior/victory": {
+      "frame": {
+        "x": 1173,
         "y": 3,
         "w": 384,
         "h": 384

@@ -29,6 +29,23 @@ function forceVictory(engine) {
   return result.ok;
 }
 
+function findMoveGrantingExtraTurn(engine) {
+  const legalMoves = findLegalMoves(engine.state.board);
+  for (const move of legalMoves) {
+    const attempt = engine.playerSwap(move.indexA, move.indexB, { autoEnemyTurn: false });
+    if (!attempt.ok) {
+      continue;
+    }
+
+    const hasLargeMatch = attempt.cascades.some((cascade) => cascade.matches.some((group) => group.length >= 4));
+    if (hasLargeMatch) {
+      return { move, attempt };
+    }
+  }
+
+  return null;
+}
+
 describe("engine replay determinism", () => {
   test("same replay produces identical board and actor states", () => {
     const engine = createGameEngine({ seed: "replay-seed", classId: "wizard" });
@@ -93,7 +110,7 @@ describe("engine replay determinism", () => {
     expect(found).toBe(true);
     const eventTypes = engine.state.logger.getEvents().map((e) => e.type);
     expect(eventTypes).toContain("turn_start");
-    expect(eventTypes).toContain("turn_end");
+    expect(eventTypes.includes("turn_end") || eventTypes.includes("extra_turn_granted")).toBe(true);
     expect(eventTypes).toContain("swap_attempt");
   });
 
@@ -189,5 +206,34 @@ describe("starting player and encounter outcomes", () => {
     expect(engine.state.outcome).toBe("none");
     expect(engine.state.encounterIndex).toBe(beforeEncounter + 1);
     expect(engine.state.pendingEncounterStart).toBe(true);
+  });
+});
+
+describe("extra turn rule", () => {
+  test("4+ match grants player another full turn", () => {
+    let result = null;
+
+    for (let i = 0; i < 240; i += 1) {
+      const engine = createGameEngine({ seed: `extra-turn-seed-${i}`, classId: "warrior" });
+      engine.markEncounterIntroShown();
+      advanceUntilPlayerTurn(engine);
+      if (engine.state.turnPhase === "spell") {
+        engine.skipSpellPhase();
+      }
+
+      const found = findMoveGrantingExtraTurn(engine);
+      if (found) {
+        result = { engine, ...found };
+        break;
+      }
+    }
+
+    expect(result).toBeTruthy();
+    expect(result.attempt.grantedExtraTurn).toBe(true);
+    expect(result.engine.state.turnOwner).toBe("player");
+    expect(result.engine.state.turnPhase).toBe("spell");
+
+    const eventTypes = result.engine.state.logger.getEvents().map((event) => event.type);
+    expect(eventTypes).toContain("extra_turn_granted");
   });
 });

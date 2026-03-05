@@ -34,6 +34,18 @@ function roll0to100(rng) {
   return Math.floor(rng.next() * 101);
 }
 
+function hasLargeMatch(cascades) {
+  for (const cascade of cascades) {
+    for (const group of cascade.matches) {
+      if (group.length >= 4) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 export function createGameEngine({ seed = "diablo-match-v2", classId = "warrior", logLevel = "INFO" } = {}) {
   const rng = createRng(seed);
   const logger = createEventLogger({ seed });
@@ -254,6 +266,7 @@ export function createGameEngine({ seed = "diablo-match-v2", classId = "warrior"
         logEvent("damage_application", {
           by: actor.name,
           to: opponent.name,
+          level: cascade.level,
           detail: event,
           resourceDelta: effect.resourceDelta,
         });
@@ -358,17 +371,37 @@ export function createGameEngine({ seed = "diablo-match-v2", classId = "warrior"
       return resolved;
     }
 
+    const grantedExtraTurn = hasLargeMatch(resolved.cascades);
+    if (grantedExtraTurn) {
+      state.turnOwner = "player";
+      state.turnPhase = "spell";
+      state.lastAction = `Extra turn granted (${resolved.cascades.length} cascades)`;
+      logEvent("extra_turn_granted", {
+        owner: "player",
+        reason: "large_match",
+        minimumMatchSize: 4,
+      });
+      return {
+        ...resolved,
+        grantedExtraTurn: true,
+      };
+    }
+
     endTurn("player");
     beginTurn("enemy");
     if (autoEnemyTurn) {
       const enemyTurnResult = processEnemyTurn();
       return {
         ...resolved,
+        grantedExtraTurn: false,
         enemyTurnResult,
       };
     }
 
-    return resolved;
+    return {
+      ...resolved,
+      grantedExtraTurn: false,
+    };
   }
 
   function enemyTrySpell() {

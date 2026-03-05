@@ -33,6 +33,7 @@ export class CombatHUD {
     this.heroOverrideUntil = 0;
     this.heroBaseState = "idle";
     this.currentHeroState = "idle";
+    this.currentEnemyState = "idle";
 
     this.activeTurnOwner = "player";
     this.phaseBannerVisible = false;
@@ -317,9 +318,13 @@ export class CombatHUD {
     const frame = `portraits/${this.heroFolder}/${state}`;
     const atlas = this.scene.textures.get("ui-portraits-atlas");
     const fallback = `portraits/${this.heroFolder}/idle`;
+    const sharedDeadFallback = "portraits/warrior/dead";
     if (atlas?.has(frame)) {
       this.heroPortrait.setFrame(frame);
       this.currentHeroState = state;
+    } else if (state === "dead" && atlas?.has(sharedDeadFallback)) {
+      this.heroPortrait.setFrame(sharedDeadFallback);
+      this.currentHeroState = "dead";
     } else if (atlas?.has(fallback)) {
       this.heroPortrait.setFrame(fallback);
       this.currentHeroState = "idle";
@@ -333,8 +338,10 @@ export class CombatHUD {
 
     if (atlas?.has(frame)) {
       this.enemyPortrait.setFrame(frame);
+      this.currentEnemyState = state;
     } else if (atlas?.has(fallback)) {
       this.enemyPortrait.setFrame(fallback);
+      this.currentEnemyState = "idle";
     }
   }
 
@@ -408,12 +415,25 @@ export class CombatHUD {
     this.updateBar(this.enemyBars.mana, enemy.mana ?? 0, Math.max(10, enemy.maxMana ?? enemy.mana ?? 0, 1));
     this.updateBar(this.enemyBars.armor, enemy.armor ?? 0, Math.max(20, enemy.armor ?? 0, 1));
 
-    const hpRatio = hero.maxHp > 0 ? hero.hp / hero.maxHp : 1;
-    this.heroBaseState = hpRatio < 0.25 ? "lowhp" : "idle";
+    if (hero.hp <= 0) {
+      this.heroStateLocked = true;
+      this.heroOverrideUntil = Number.POSITIVE_INFINITY;
+      if (this.currentHeroState !== "dead") {
+        this.applyHeroState("dead");
+      }
+    } else {
+      const hpRatio = hero.maxHp > 0 ? hero.hp / hero.maxHp : 1;
+      this.heroBaseState = hpRatio < 0.25 ? "lowhp" : "idle";
 
-    const hasTimedOverride = this.scene.time.now < this.heroOverrideUntil;
-    if (!this.heroStateLocked && !hasTimedOverride && this.currentHeroState !== this.heroBaseState) {
-      this.applyHeroState(this.heroBaseState);
+      const hasTimedOverride = this.scene.time.now < this.heroOverrideUntil;
+      if (!this.heroStateLocked && !hasTimedOverride && this.currentHeroState !== this.heroBaseState) {
+        this.applyHeroState(this.heroBaseState);
+      }
+    }
+
+    const enemyState = enemy.hp <= 0 ? "dead" : "idle";
+    if (this.currentEnemyState !== enemyState) {
+      this.applyEnemyState(enemyState);
     }
 
     this.heroName.setText(capWord((hero.name ?? "hero").toLowerCase()));

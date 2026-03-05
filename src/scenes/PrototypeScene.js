@@ -894,6 +894,9 @@ export class PrototypeScene extends Phaser.Scene {
     }
     this.applyViewBoardToBaseSprites();
 
+    this.processNewEngineEvents({ maxCascadeLevel: cascade.level });
+    this.refreshHud();
+
     await this.sleep(RESOLUTION_TIMINGS_MS.effectPopups);
 
     const rowTime = cascade.drops.length > 40 ? RESOLUTION_TIMINGS_MS.fallPerRowHeavy : RESOLUTION_TIMINGS_MS.fallPerRow;
@@ -1013,6 +1016,7 @@ export class PrototypeScene extends Phaser.Scene {
     }
 
     this.setViewBoard(resolved.boardAfter);
+    this.processNewEngineEvents();
   }
 
   lockBoardInput() {
@@ -1240,13 +1244,39 @@ export class PrototypeScene extends Phaser.Scene {
     this.refreshHud();
   }
 
-  processNewEngineEvents() {
+  processNewEngineEvents({ maxCascadeLevel = null } = {}) {
     const events = this.engine.state.logger.getEvents();
     const startIndex = this.lastProcessedEventIndex;
+    const boundedTypes = new Set(["swap_attempt", "match_found", "cascade_step", "match_resolved", "damage_application", "board_reshuffle"]);
+    const leveledTypes = new Set(["cascade_step", "match_resolved", "damage_application"]);
 
-    for (let i = startIndex; i < events.length; i += 1) {
+    const shouldStopForCascadeWindow = (event) => {
+      if (maxCascadeLevel == null) {
+        return false;
+      }
+
+      if (!boundedTypes.has(event.type)) {
+        return true;
+      }
+
+      if (leveledTypes.has(event.type)) {
+        const level = event?.payload?.level;
+        if (typeof level === "number" && level > maxCascadeLevel) {
+          return true;
+        }
+      }
+
+      return false;
+    };
+
+    let i = startIndex;
+    for (; i < events.length; i += 1) {
       const event = events[i];
       const { type, payload } = event;
+
+      if (shouldStopForCascadeWindow(event)) {
+        break;
+      }
 
       if (type === "spell_cast" && payload.caster === this.engine.state.player.name) {
         this.hud?.setHeroState("cast");
@@ -1316,9 +1346,14 @@ export class PrototypeScene extends Phaser.Scene {
         const tile = capWord(String(payload.tileType ?? "tile"));
         this.hud?.pushCombatLog(`${payload.size}x ${tile}`);
       }
+
+      if (type === "extra_turn_granted") {
+        this.boardEffects?.showExtraTurn();
+        this.hud?.pushCombatLog("Extra turn!");
+      }
     }
 
-    this.lastProcessedEventIndex = events.length;
+    this.lastProcessedEventIndex = i;
   }
 
   refreshHud() {
