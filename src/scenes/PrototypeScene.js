@@ -17,6 +17,7 @@ const DEPTH_EFFECTS = 22;
 const DEPTH_HUD = 30;
 const DEPTH_DEV_PANEL = 60;
 const DEPTH_MODAL = 80;
+const BASE_URL = import.meta.env.BASE_URL;
 
 function downloadTextFile(name, text) {
   const blob = new Blob([text], { type: "application/json" });
@@ -76,12 +77,12 @@ export class PrototypeScene extends Phaser.Scene {
   }
 
   preload() {
-    this.load.atlas("tiles-atlas", "/assets/generated/tiles-atlas.png", "/assets/generated/tiles-atlas.json");
+    this.load.atlas("tiles-atlas", `${BASE_URL}assets/generated/tiles-atlas.png`, `${BASE_URL}assets/generated/tiles-atlas.json`);
 
     this.load.atlas(
       "ui-portraits-atlas",
-      "/assets/generated/atlas/ui-portraits-atlas.png",
-      "/assets/generated/atlas/ui-portraits-atlas.json",
+      `${BASE_URL}assets/generated/atlas/ui-portraits-atlas.png`,
+      `${BASE_URL}assets/generated/atlas/ui-portraits-atlas.json`,
     );
   }
 
