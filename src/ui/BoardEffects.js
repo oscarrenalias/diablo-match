@@ -143,10 +143,10 @@ export class BoardEffects {
 
   showDamage(amount, target = "enemy") {
     const anchor = this.sideAnchor(target === "hero" ? "hero" : "enemy");
-    this.showFloatingText(`-${Math.round(amount)}`, anchor.x, anchor.y, {
+    this.showFloatingText(`${Math.round(amount)} Damage`, anchor.x, anchor.y, {
       color: "#ff8f8f",
       fontSize: 30,
-      duration: 900,
+      duration: 1300,
       lane: anchor.lane,
     });
   }
@@ -156,7 +156,7 @@ export class BoardEffects {
     this.showFloatingText(`+${Math.round(amount)} mana`, anchor.x, anchor.y - 16, {
       color: "#91b7ff",
       fontSize: 24,
-      duration: 900,
+      duration: 1300,
       lane: anchor.lane,
     });
   }
@@ -166,7 +166,7 @@ export class BoardEffects {
     this.showFloatingText(`+${Math.round(amount)} armor`, anchor.x, anchor.y - 16, {
       color: "#d6d8dd",
       fontSize: 24,
-      duration: 900,
+      duration: 1300,
       lane: anchor.lane,
     });
   }
@@ -176,7 +176,7 @@ export class BoardEffects {
     this.showFloatingText(`+${Math.round(amount)} gold`, anchor.x, anchor.y - 16, {
       color: "#ffd580",
       fontSize: 24,
-      duration: 900,
+      duration: 1300,
       lane: anchor.lane,
     });
   }

@@ -37,6 +37,7 @@ export class CombatHUD {
 
     this.activeTurnOwner = "player";
     this.phaseBannerVisible = false;
+    this.externalPortraitLayoutEnabled = false;
 
     this.logLines = [];
 
@@ -247,6 +248,33 @@ export class CombatHUD {
     this.primarySpellHandler = onCastPrimary ?? null;
     this.spell2Handler = onSpell2 ?? null;
     this.spell3Handler = onSpell3 ?? null;
+  }
+
+  setExternalPortraitLayoutEnabled(enabled) {
+    this.externalPortraitLayoutEnabled = Boolean(enabled);
+  }
+
+  getPortraitNodes() {
+    return {
+      heroPortrait: this.heroPortrait,
+      enemyPortrait: this.enemyPortrait,
+    };
+  }
+
+  setLegacyPortraitChromeVisible(visible) {
+    const value = Boolean(visible);
+    const nodes = [
+      this.heroPortraitGlow,
+      this.enemyPortraitGlow,
+      this.heroPortraitFrame,
+      this.enemyPortraitFrame,
+      this.heroName,
+      this.enemyName,
+    ];
+
+    for (const node of nodes) {
+      node.setVisible(value);
+    }
   }
 
   setTurnPhaseLabel(text) {
@@ -478,23 +506,25 @@ export class CombatHUD {
       enemyY = boardRect.y;
     }
 
-    this.heroPortraitFrame.setPosition(heroX, heroY);
-    this.heroPortraitFrame.setSize(portraitSize, portraitSize);
-    this.enemyPortraitFrame.setPosition(enemyX, enemyY);
-    this.enemyPortraitFrame.setSize(portraitSize, portraitSize);
+    if (!this.externalPortraitLayoutEnabled) {
+      this.heroPortraitFrame.setPosition(heroX, heroY);
+      this.heroPortraitFrame.setSize(portraitSize, portraitSize);
+      this.enemyPortraitFrame.setPosition(enemyX, enemyY);
+      this.enemyPortraitFrame.setSize(portraitSize, portraitSize);
 
-    this.heroPortrait.setPosition(heroX + portraitSize / 2, heroY + portraitSize / 2);
-    this.enemyPortrait.setPosition(enemyX + portraitSize / 2, enemyY + portraitSize / 2);
-    this.heroPortrait.setDisplaySize(portraitSize - 12, portraitSize - 12);
-    this.enemyPortrait.setDisplaySize(portraitSize - 12, portraitSize - 12);
+      this.heroPortrait.setPosition(heroX + portraitSize / 2, heroY + portraitSize / 2);
+      this.enemyPortrait.setPosition(enemyX + portraitSize / 2, enemyY + portraitSize / 2);
+      this.heroPortrait.setDisplaySize(portraitSize - 12, portraitSize - 12);
+      this.enemyPortrait.setDisplaySize(portraitSize - 12, portraitSize - 12);
 
-    this.heroPortraitGlow.setPosition(heroX + portraitSize / 2 + 24, heroY + portraitSize / 2);
-    this.heroPortraitGlow.setRadius(Math.round(portraitSize * 0.5));
-    this.enemyPortraitGlow.setPosition(enemyX + portraitSize / 2 - 24, enemyY + portraitSize / 2);
-    this.enemyPortraitGlow.setRadius(Math.round(portraitSize * 0.5));
+      this.heroPortraitGlow.setPosition(heroX + portraitSize / 2 + 24, heroY + portraitSize / 2);
+      this.heroPortraitGlow.setRadius(Math.round(portraitSize * 0.5));
+      this.enemyPortraitGlow.setPosition(enemyX + portraitSize / 2 - 24, enemyY + portraitSize / 2);
+      this.enemyPortraitGlow.setRadius(Math.round(portraitSize * 0.5));
 
-    this.heroName.setPosition(heroX + portraitSize / 2, heroY + portraitSize + 6);
-    this.enemyName.setPosition(enemyX + portraitSize / 2, enemyY + portraitSize + 6);
+      this.heroName.setPosition(heroX + portraitSize / 2, heroY + portraitSize + 6);
+      this.enemyName.setPosition(enemyX + portraitSize / 2, enemyY + portraitSize + 6);
+    }
 
     const heroBarsX = heroX;
     const enemyBarsX = enemyX;
