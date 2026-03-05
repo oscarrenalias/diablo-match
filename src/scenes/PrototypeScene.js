@@ -1,33 +1,22 @@
 import Phaser from "phaser";
 import { BOARD_HEIGHT, BOARD_WIDTH } from "../game/constants.js";
+import { areAdjacent, findLegalMoves } from "../game/board.js";
 import { createGameEngine } from "../game/engine.js";
 import { BoardEffects } from "../ui/BoardEffects.js";
 import { CombatHUD } from "../ui/CombatHUD.js";
+import { IDLE_HINT_DELAY_MS, PHASE_BANNER, RESOLUTION_TIMINGS_MS, SELECTION_VFX, START_OVERLAY_MS } from "../ui/hudConfig.js";
 
 const TILE_SIZE = 64;
 const TILE_GAP = 4;
 
 const DEPTH_BOARD = 10;
+const DEPTH_BOARD_GLOW = 11;
 const DEPTH_BOARD_FRAME = 12;
 const DEPTH_OVERLAY = 14;
 const DEPTH_EFFECTS = 22;
 const DEPTH_HUD = 30;
 const DEPTH_DEV_PANEL = 60;
-
-const SWAP_MS = 90;
-const INVALID_OUT_MS = 80;
-const INVALID_BACK_MS = 70;
-const CLEAR_MS = 70;
-const FALL_BASE_MS = 60;
-const FALL_PER_ROW_MS = 45;
-const FALL_PER_ROW_MS_HEAVY = 30;
-const FALL_MAX_MS = 220;
-const SPAWN_MS = 90;
-const CASCADE_GAP_MS = 25;
-
-function shortNum(value) {
-  return String(Math.round(value));
-}
+const DEPTH_MODAL = 80;
 
 function downloadTextFile(name, text) {
   const blob = new Blob([text], { type: "application/json" });
@@ -43,9 +32,20 @@ function capWord(value) {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
+function collectMatchedIndices(matches) {
+  const unique = new Set();
+  for (const group of matches) {
+    for (const index of group) {
+      unique.add(index);
+    }
+  }
+  return [...unique];
+}
+
 export class PrototypeScene extends Phaser.Scene {
   constructor() {
     super("prototype-scene");
+
     this.engine = null;
     this.selectedIndex = null;
     this.savedReplay = null;
@@ -55,23 +55,28 @@ export class PrototypeScene extends Phaser.Scene {
 
     this.baseTileSprites = [];
     this.baseTileFrames = [];
+    this.baseTileGlows = [];
     this.viewBoard = [];
 
     this.isAnimatingBoard = false;
+    this.isModalBlockingInput = false;
     this.pendingResize = false;
+
+    this.hintIndices = [];
+    this.hintTween = null;
+    this.lastInteractionAt = 0;
 
     this.lastProcessedEventIndex = 0;
     this.activeEnemyId = null;
+
+    this.startOverlayNodes = null;
+    this.outcomeModalNodes = null;
 
     this.devPanelVisible = true;
   }
 
   preload() {
-    this.load.atlas(
-      "tiles-atlas",
-      "/assets/generated/tiles-atlas.png",
-      "/assets/generated/tiles-atlas.json",
-    );
+    this.load.atlas("tiles-atlas", "/assets/generated/tiles-atlas.png", "/assets/generated/tiles-atlas.json");
 
     this.load.atlas(
       "ui-portraits-atlas",
@@ -92,8 +97,19 @@ export class PrototypeScene extends Phaser.Scene {
     this.initBoardSprites();
     this.createHudSystems();
     this.createDevPanel();
+    this.createStartOverlay();
+    this.createOutcomeModal();
+
+    this.lastInteractionAt = this.time.now;
+    this.time.addEvent({
+      delay: 220,
+      loop: true,
+      callback: () => this.updateIdleHint(),
+    });
+
     this.processNewEngineEvents();
     this.refreshHud();
+    this.runEncounterStartSequence();
 
     this.input.keyboard.on("keydown-D", () => {
       this.devPanelVisible = !this.devPanelVisible;
@@ -109,6 +125,7 @@ export class PrototypeScene extends Phaser.Scene {
       this.layoutBoard();
       this.layoutHud();
       this.layoutDevPanel();
+      this.layoutOverlayNodes();
       this.refreshHud();
     });
   }
@@ -120,9 +137,11 @@ export class PrototypeScene extends Phaser.Scene {
       classId,
       logLevel: this.logLevels[this.logLevelIndex],
     });
+
     this.selectedIndex = null;
     this.lastProcessedEventIndex = 0;
     this.activeEnemyId = this.engine.state.enemy?.id ?? null;
+    this.clearHint();
   }
 
   getBoardStart() {
@@ -146,6 +165,7 @@ export class PrototypeScene extends Phaser.Scene {
       y: start.y,
       width,
       height,
+      left: start.x,
       right: start.x + width,
       bottom: start.y + height,
       cx: start.x + width / 2,
@@ -258,9 +278,227 @@ export class PrototypeScene extends Phaser.Scene {
     }
   }
 
+  createStartOverlay() {
+    const bg = this.add.rectangle(0, 0, this.scale.width, this.scale.height, 0x090b10, 0.54).setOrigin(0).setDepth(DEPTH_MODAL);
+    const text = this.add
+      .text(this.scale.width / 2, this.scale.height / 2, "", {
+        fontFamily: "Trebuchet MS",
+        fontSize: "46px",
+        color: "#f1e0c8",
+        stroke: "#18120f",
+        strokeThickness: 6,
+      })
+      .setOrigin(0.5)
+      .setDepth(DEPTH_MODAL + 1);
+
+    bg.setVisible(false);
+    text.setVisible(false);
+    this.startOverlayNodes = { bg, text };
+  }
+
+  createOutcomeModal() {
+    const bg = this.add.rectangle(0, 0, this.scale.width, this.scale.height, 0x07090f, 0.72).setOrigin(0).setDepth(DEPTH_MODAL);
+
+    const panel = this.add
+      .rectangle(this.scale.width / 2, this.scale.height / 2, 420, 300, 0x171a24, 0.96)
+      .setDepth(DEPTH_MODAL + 1)
+      .setStrokeStyle(2, 0x5f6780);
+
+    const title = this.add
+      .text(panel.x, panel.y - 88, "", {
+        fontFamily: "Trebuchet MS",
+        fontSize: "36px",
+        color: "#f0e4d0",
+      })
+      .setOrigin(0.5)
+      .setDepth(DEPTH_MODAL + 2);
+
+    const body = this.add
+      .text(panel.x, panel.y - 24, "", {
+        fontFamily: "Trebuchet MS",
+        fontSize: "24px",
+        color: "#d2d9e6",
+        align: "center",
+        lineSpacing: 8,
+      })
+      .setOrigin(0.5)
+      .setDepth(DEPTH_MODAL + 2);
+
+    const buttonBg = this.add
+      .rectangle(panel.x, panel.y + 92, 190, 48, 0x313746, 1)
+      .setDepth(DEPTH_MODAL + 2)
+      .setStrokeStyle(2, 0x767f98)
+      .setInteractive({ useHandCursor: true });
+
+    const buttonLabel = this.add
+      .text(panel.x, panel.y + 92, "", {
+        fontFamily: "Trebuchet MS",
+        fontSize: "24px",
+        color: "#f0f3fb",
+      })
+      .setOrigin(0.5)
+      .setDepth(DEPTH_MODAL + 3);
+
+    bg.setVisible(false);
+    panel.setVisible(false);
+    title.setVisible(false);
+    body.setVisible(false);
+    buttonBg.setVisible(false);
+    buttonLabel.setVisible(false);
+
+    buttonBg.on("pointerup", () => {
+      const mode = this.outcomeModalNodes?.mode;
+      if (mode === "victory") {
+        this.onContinueVictory();
+      } else if (mode === "defeat") {
+        this.onRestartAfterDefeat();
+      }
+    });
+
+    this.outcomeModalNodes = {
+      bg,
+      panel,
+      title,
+      body,
+      buttonBg,
+      buttonLabel,
+      mode: null,
+    };
+  }
+
+  layoutOverlayNodes() {
+    if (this.startOverlayNodes) {
+      this.startOverlayNodes.bg.setSize(this.scale.width, this.scale.height);
+      this.startOverlayNodes.text.setPosition(this.scale.width / 2, this.scale.height / 2);
+    }
+
+    if (this.outcomeModalNodes) {
+      this.outcomeModalNodes.bg.setSize(this.scale.width, this.scale.height);
+      this.outcomeModalNodes.panel.setPosition(this.scale.width / 2, this.scale.height / 2);
+      this.outcomeModalNodes.title.setPosition(this.scale.width / 2, this.scale.height / 2 - 88);
+      this.outcomeModalNodes.body.setPosition(this.scale.width / 2, this.scale.height / 2 - 24);
+      this.outcomeModalNodes.buttonBg.setPosition(this.scale.width / 2, this.scale.height / 2 + 92);
+      this.outcomeModalNodes.buttonLabel.setPosition(this.scale.width / 2, this.scale.height / 2 + 92);
+    }
+  }
+
+  async runEncounterStartSequence() {
+    if (!this.engine.state.pendingEncounterStart) {
+      return;
+    }
+
+    this.clearSelection();
+    this.clearHint();
+    this.isModalBlockingInput = true;
+
+    const text = this.engine.state.currentStarter === "player" ? "PLAYER STARTS" : "ENEMY STARTS";
+
+    this.startOverlayNodes.bg.setAlpha(0);
+    this.startOverlayNodes.text.setAlpha(0);
+    this.startOverlayNodes.text.setText(text);
+
+    this.startOverlayNodes.bg.setVisible(true);
+    this.startOverlayNodes.text.setVisible(true);
+
+    await Promise.all([
+      this.tweenPromise({ targets: this.startOverlayNodes.bg, alpha: 0.54, duration: 170, ease: "Sine.easeOut" }),
+      this.tweenPromise({ targets: this.startOverlayNodes.text, alpha: 1, duration: 170, ease: "Sine.easeOut" }),
+    ]);
+
+    await this.sleep(START_OVERLAY_MS);
+
+    await Promise.all([
+      this.tweenPromise({ targets: this.startOverlayNodes.bg, alpha: 0, duration: 150, ease: "Sine.easeIn" }),
+      this.tweenPromise({ targets: this.startOverlayNodes.text, alpha: 0, duration: 150, ease: "Sine.easeIn" }),
+    ]);
+
+    this.startOverlayNodes.bg.setVisible(false);
+    this.startOverlayNodes.text.setVisible(false);
+
+    this.engine.markEncounterIntroShown();
+    this.isModalBlockingInput = false;
+    this.lastInteractionAt = this.time.now;
+    this.refreshHud();
+
+    if (this.engine.state.turnOwner === "enemy" && this.engine.state.outcome === "none") {
+      await this.runEnemyTurnsIfNeeded();
+    }
+  }
+
+  showOutcomeModal({ mode, title, body, buttonText }) {
+    this.isModalBlockingInput = true;
+    this.outcomeModalNodes.mode = mode;
+    this.outcomeModalNodes.title.setText(title);
+    this.outcomeModalNodes.body.setText(body);
+    this.outcomeModalNodes.buttonLabel.setText(buttonText);
+
+    this.outcomeModalNodes.bg.setVisible(true);
+    this.outcomeModalNodes.panel.setVisible(true);
+    this.outcomeModalNodes.title.setVisible(true);
+    this.outcomeModalNodes.body.setVisible(true);
+    this.outcomeModalNodes.buttonBg.setVisible(true);
+    this.outcomeModalNodes.buttonLabel.setVisible(true);
+  }
+
+  hideOutcomeModal() {
+    this.outcomeModalNodes.mode = null;
+    this.outcomeModalNodes.bg.setVisible(false);
+    this.outcomeModalNodes.panel.setVisible(false);
+    this.outcomeModalNodes.title.setVisible(false);
+    this.outcomeModalNodes.body.setVisible(false);
+    this.outcomeModalNodes.buttonBg.setVisible(false);
+    this.outcomeModalNodes.buttonLabel.setVisible(false);
+
+    this.isModalBlockingInput = false;
+  }
+
+  onContinueVictory() {
+    const result = this.engine.continueAfterVictory();
+    if (!result.ok) {
+      return;
+    }
+
+    this.hideOutcomeModal();
+    this.clearSelection();
+    this.clearHint();
+    this.setViewBoard(this.engine.state.board);
+    this.processNewEngineEvents();
+    this.refreshHud();
+    this.runEncounterStartSequence();
+  }
+
+  onRestartAfterDefeat() {
+    this.hideOutcomeModal();
+    this.resetRun();
+  }
+
+  resetRun() {
+    this.createEngine(this.currentClass);
+    this.engine.state.statusText = `Started new run as ${this.currentClass}.`;
+
+    this.initBoardSprites();
+
+    if (this.hud) {
+      this.hud.destroy();
+      this.hud = null;
+    }
+    if (this.boardEffects) {
+      this.boardEffects.destroy();
+      this.boardEffects = null;
+    }
+
+    this.createHudSystems();
+    this.processNewEngineEvents();
+    this.refreshHud();
+    this.runEncounterStartSequence();
+  }
+
   initBoardSprites() {
     for (const sprite of this.baseTileSprites) {
       sprite.destroy();
+    }
+    for (const glow of this.baseTileGlows) {
+      glow.destroy();
     }
     for (const frame of this.baseTileFrames) {
       frame.destroy();
@@ -268,6 +506,7 @@ export class PrototypeScene extends Phaser.Scene {
 
     this.baseTileSprites = [];
     this.baseTileFrames = [];
+    this.baseTileGlows = [];
 
     for (let index = 0; index < BOARD_WIDTH * BOARD_HEIGHT; index += 1) {
       const center = this.cellCenter(index);
@@ -278,16 +517,26 @@ export class PrototypeScene extends Phaser.Scene {
         .setDisplaySize(TILE_SIZE, TILE_SIZE)
         .setDepth(DEPTH_BOARD)
         .setInteractive({ useHandCursor: true })
-        .on("pointerup", () => this.onTileTap(index));
+        .on("pointerup", () => {
+          this.registerPlayerInteraction();
+          this.onTileTap(index);
+        });
+
+      const glow = this.add
+        .rectangle(topLeft.x, topLeft.y, TILE_SIZE, TILE_SIZE, 0xf3f7ff, 0)
+        .setOrigin(0)
+        .setDepth(DEPTH_BOARD_GLOW)
+        .setBlendMode(Phaser.BlendModes.ADD);
 
       const frame = this.add
         .rectangle(topLeft.x, topLeft.y, TILE_SIZE, TILE_SIZE)
         .setOrigin(0)
         .setFillStyle(0x000000, 0)
-        .setStrokeStyle(2, 0x293242)
+        .setStrokeStyle(SELECTION_VFX.idleStrokeWidth, SELECTION_VFX.idleStrokeColor)
         .setDepth(DEPTH_BOARD_FRAME);
 
       this.baseTileSprites.push(sprite);
+      this.baseTileGlows.push(glow);
       this.baseTileFrames.push(frame);
     }
 
@@ -301,12 +550,14 @@ export class PrototypeScene extends Phaser.Scene {
 
       const sprite = this.baseTileSprites[index];
       const frame = this.baseTileFrames[index];
-      if (!sprite || !frame) {
+      const glow = this.baseTileGlows[index];
+      if (!sprite || !frame || !glow) {
         continue;
       }
 
       sprite.setPosition(center.x, center.y);
       frame.setPosition(topLeft.x, topLeft.y);
+      glow.setPosition(topLeft.x, topLeft.y);
     }
   }
 
@@ -336,10 +587,102 @@ export class PrototypeScene extends Phaser.Scene {
     this.syncSelectionFrames();
   }
 
+  clearSelection() {
+    this.selectedIndex = null;
+    this.syncSelectionFrames();
+  }
+
+  clearHint() {
+    this.hintIndices = [];
+    if (this.hintTween) {
+      this.hintTween.remove();
+      this.hintTween = null;
+    }
+    this.syncSelectionFrames();
+  }
+
+  registerPlayerInteraction() {
+    this.lastInteractionAt = this.time.now;
+    this.clearHint();
+  }
+
+  updateIdleHint() {
+    if (this.isInputBlocked()) {
+      this.clearHint();
+      return;
+    }
+
+    if (this.engine.state.turnOwner !== "player" || this.engine.state.turnPhase !== "swap") {
+      this.clearHint();
+      return;
+    }
+
+    if (this.selectedIndex != null) {
+      this.clearHint();
+      return;
+    }
+
+    if (this.hintIndices.length > 0) {
+      return;
+    }
+
+    if (this.time.now - this.lastInteractionAt < IDLE_HINT_DELAY_MS) {
+      return;
+    }
+
+    const legalMoves = findLegalMoves(this.engine.state.board);
+    if (legalMoves.length === 0) {
+      return;
+    }
+
+    const move = legalMoves[0];
+    this.hintIndices = [move.indexA, move.indexB];
+    this.syncSelectionFrames();
+
+    const hintSprites = this.hintIndices.map((index) => this.baseTileSprites[index]).filter(Boolean);
+    if (hintSprites.length > 0) {
+      this.hintTween = this.tweens.add({
+        targets: hintSprites,
+        alpha: { from: 0.76, to: 1 },
+        duration: 420,
+        yoyo: true,
+        repeat: -1,
+      });
+    }
+  }
+
   syncSelectionFrames() {
     for (let index = 0; index < this.baseTileFrames.length; index += 1) {
+      const frame = this.baseTileFrames[index];
+      const glow = this.baseTileGlows[index];
+      const sprite = this.baseTileSprites[index];
       const isSelected = this.selectedIndex === index;
-      this.baseTileFrames[index].setStrokeStyle(2, isSelected ? 0xf2f3f6 : 0x293242);
+      const isHinted = this.hintIndices.includes(index);
+
+      if (!frame || !glow || !sprite) {
+        continue;
+      }
+
+      if (isSelected) {
+        frame.setStrokeStyle(SELECTION_VFX.strokeWidth, SELECTION_VFX.strokeColor);
+        glow.setFillStyle(0xf3f7ff, SELECTION_VFX.glowAlpha);
+        if (sprite.visible) {
+          sprite.setScale(SELECTION_VFX.scale);
+        }
+      } else if (isHinted) {
+        frame.setStrokeStyle(2, 0x8ba9d8);
+        glow.setFillStyle(0xa5bcdf, 0.12);
+        if (sprite.visible) {
+          sprite.setScale(1.03);
+        }
+      } else {
+        frame.setStrokeStyle(SELECTION_VFX.idleStrokeWidth, SELECTION_VFX.idleStrokeColor);
+        glow.setFillStyle(0xffffff, 0);
+        if (sprite.visible) {
+          sprite.setScale(1);
+          sprite.setAlpha(1);
+        }
+      }
     }
   }
 
@@ -383,16 +726,40 @@ export class PrototypeScene extends Phaser.Scene {
     const targetB = this.cellCenter(indexA);
 
     await Promise.all([
-      this.tweenPromise({ targets: spriteA, x: targetA.x, y: targetA.y, ease: "Sine.easeInOut", duration: INVALID_OUT_MS }),
-      this.tweenPromise({ targets: spriteB, x: targetB.x, y: targetB.y, ease: "Sine.easeInOut", duration: INVALID_OUT_MS }),
+      this.tweenPromise({
+        targets: spriteA,
+        x: targetA.x,
+        y: targetA.y,
+        ease: "Sine.easeInOut",
+        duration: RESOLUTION_TIMINGS_MS.invalidOut,
+      }),
+      this.tweenPromise({
+        targets: spriteB,
+        x: targetB.x,
+        y: targetB.y,
+        ease: "Sine.easeInOut",
+        duration: RESOLUTION_TIMINGS_MS.invalidOut,
+      }),
     ]);
 
     const originA = this.cellCenter(indexA);
     const originB = this.cellCenter(indexB);
 
     await Promise.all([
-      this.tweenPromise({ targets: spriteA, x: originA.x, y: originA.y, ease: "Sine.easeInOut", duration: INVALID_BACK_MS }),
-      this.tweenPromise({ targets: spriteB, x: originB.x, y: originB.y, ease: "Sine.easeInOut", duration: INVALID_BACK_MS }),
+      this.tweenPromise({
+        targets: spriteA,
+        x: originA.x,
+        y: originA.y,
+        ease: "Sine.easeInOut",
+        duration: RESOLUTION_TIMINGS_MS.invalidBack,
+      }),
+      this.tweenPromise({
+        targets: spriteB,
+        x: originB.x,
+        y: originB.y,
+        ease: "Sine.easeInOut",
+        duration: RESOLUTION_TIMINGS_MS.invalidBack,
+      }),
     ]);
 
     spriteA.destroy();
@@ -418,8 +785,20 @@ export class PrototypeScene extends Phaser.Scene {
     const targetB = this.cellCenter(indexA);
 
     await Promise.all([
-      this.tweenPromise({ targets: spriteA, x: targetA.x, y: targetA.y, ease: "Sine.easeInOut", duration: SWAP_MS }),
-      this.tweenPromise({ targets: spriteB, x: targetB.x, y: targetB.y, ease: "Sine.easeInOut", duration: SWAP_MS }),
+      this.tweenPromise({
+        targets: spriteA,
+        x: targetA.x,
+        y: targetA.y,
+        ease: "Sine.easeInOut",
+        duration: RESOLUTION_TIMINGS_MS.swap,
+      }),
+      this.tweenPromise({
+        targets: spriteB,
+        x: targetB.x,
+        y: targetB.y,
+        ease: "Sine.easeInOut",
+        duration: RESOLUTION_TIMINGS_MS.swap,
+      }),
     ]);
 
     spriteA.destroy();
@@ -439,6 +818,36 @@ export class PrototypeScene extends Phaser.Scene {
     return `${match.length}x ${tile} match`;
   }
 
+  async animateMatchHighlight(indices) {
+    if (indices.length === 0) {
+      return;
+    }
+
+    const nodes = indices.map((index) => {
+      const topLeft = this.cellTopLeft(index);
+      return this.add
+        .rectangle(topLeft.x, topLeft.y, TILE_SIZE, TILE_SIZE)
+        .setOrigin(0)
+        .setDepth(DEPTH_OVERLAY + 1)
+        .setFillStyle(0xe5d9a8, 0.12)
+        .setStrokeStyle(2, 0xffe8a6)
+        .setAlpha(0.2);
+    });
+
+    await this.tweenPromise({
+      targets: nodes,
+      alpha: 1,
+      ease: "Sine.easeInOut",
+      duration: Math.floor(RESOLUTION_TIMINGS_MS.matchHighlight / 2),
+      yoyo: true,
+      repeat: 1,
+    });
+
+    for (const node of nodes) {
+      node.destroy();
+    }
+  }
+
   async animateCascadeStep(cascade) {
     if (cascade.multiplier > 1 && this.boardEffects) {
       this.boardEffects.showCombo(cascade.multiplier);
@@ -447,6 +856,9 @@ export class PrototypeScene extends Phaser.Scene {
     for (const match of cascade.matches) {
       this.hud?.pushCombatLog(this.logLineForMatch(match, cascade.boardBefore));
     }
+
+    const matchedIndices = collectMatchedIndices(cascade.matches);
+    await this.animateMatchHighlight(matchedIndices);
 
     const clearOverlays = [];
     for (const index of cascade.clearedIndices) {
@@ -464,10 +876,10 @@ export class PrototypeScene extends Phaser.Scene {
           this.tweenPromise({
             targets: overlay,
             alpha: 0,
-            scaleX: 0.75,
-            scaleY: 0.75,
+            scaleX: 0.72,
+            scaleY: 0.72,
             ease: "Sine.easeInOut",
-            duration: CLEAR_MS,
+            duration: RESOLUTION_TIMINGS_MS.clear,
           }),
         ),
       );
@@ -481,7 +893,9 @@ export class PrototypeScene extends Phaser.Scene {
     }
     this.applyViewBoardToBaseSprites();
 
-    const rowTime = cascade.drops.length > 40 ? FALL_PER_ROW_MS_HEAVY : FALL_PER_ROW_MS;
+    await this.sleep(RESOLUTION_TIMINGS_MS.effectPopups);
+
+    const rowTime = cascade.drops.length > 40 ? RESOLUTION_TIMINGS_MS.fallPerRowHeavy : RESOLUTION_TIMINGS_MS.fallPerRow;
     const dropOverlays = cascade.drops.map((drop) => {
       const overlay = this.createOverlaySprite(drop.from, drop.tile);
       this.baseTileSprites[drop.from].setVisible(false);
@@ -495,7 +909,7 @@ export class PrototypeScene extends Phaser.Scene {
           const fromY = Math.floor(drop.from / BOARD_WIDTH);
           const toY = Math.floor(drop.to / BOARD_WIDTH);
           const rows = Math.abs(toY - fromY);
-          const duration = Math.min(FALL_MAX_MS, FALL_BASE_MS + rows * rowTime);
+          const duration = Math.min(RESOLUTION_TIMINGS_MS.fallMax, RESOLUTION_TIMINGS_MS.fallBase + rows * rowTime);
           const target = this.cellCenter(drop.to);
           return this.tweenPromise({
             targets: overlay,
@@ -540,7 +954,7 @@ export class PrototypeScene extends Phaser.Scene {
             scaleX: 1,
             scaleY: 1,
             ease: "Back.easeOut",
-            duration: SPAWN_MS,
+            duration: RESOLUTION_TIMINGS_MS.spawn,
           }),
         ),
       );
@@ -561,7 +975,7 @@ export class PrototypeScene extends Phaser.Scene {
         targets: visibleSprites,
         alpha: 0,
         ease: "Sine.easeInOut",
-        duration: 90,
+        duration: 110,
       });
     }
 
@@ -580,7 +994,7 @@ export class PrototypeScene extends Phaser.Scene {
         scaleX: 1,
         scaleY: 1,
         ease: "Sine.easeInOut",
-        duration: 110,
+        duration: 130,
       });
     }
   }
@@ -590,7 +1004,7 @@ export class PrototypeScene extends Phaser.Scene {
 
     for (const cascade of resolved.cascades) {
       await this.animateCascadeStep(cascade);
-      await this.sleep(CASCADE_GAP_MS);
+      await this.sleep(RESOLUTION_TIMINGS_MS.cascadePause);
     }
 
     if (resolved.reshuffled) {
@@ -602,6 +1016,8 @@ export class PrototypeScene extends Phaser.Scene {
 
   lockBoardInput() {
     this.isAnimatingBoard = true;
+    this.clearHint();
+    this.hud?.setPhaseBanner("", false);
   }
 
   unlockBoardInput() {
@@ -611,12 +1027,52 @@ export class PrototypeScene extends Phaser.Scene {
       this.layoutBoard();
       this.layoutHud();
       this.layoutDevPanel();
+      this.layoutOverlayNodes();
       this.refreshHud();
     }
   }
 
+  isInputBlocked() {
+    return (
+      this.isAnimatingBoard ||
+      this.isModalBlockingInput ||
+      this.engine.state.gameOver ||
+      this.engine.state.outcome !== "none" ||
+      this.engine.state.pendingEncounterStart
+    );
+  }
+
+  async runEnemyTurnsIfNeeded() {
+    if (this.isInputBlocked()) {
+      return;
+    }
+
+    let guard = 0;
+    while (!this.isInputBlocked() && this.engine.state.turnOwner === "enemy" && guard < 4) {
+      guard += 1;
+      const enemyTurn = this.engine.processEnemyTurn();
+      if (!enemyTurn?.ok) {
+        break;
+      }
+
+      if (enemyTurn.didMove && enemyTurn.resolved?.ok) {
+        this.lockBoardInput();
+        await this.animateResolvedSwap(enemyTurn.resolved);
+        this.unlockBoardInput();
+      }
+
+      this.processNewEngineEvents();
+      this.refreshHud();
+
+      if (this.engine.state.outcome !== "none") {
+        break;
+      }
+    }
+  }
+
   async onCastSpell() {
-    if (this.isAnimatingBoard) {
+    this.registerPlayerInteraction();
+    if (this.isInputBlocked()) {
       return;
     }
 
@@ -631,10 +1087,19 @@ export class PrototypeScene extends Phaser.Scene {
 
     this.processNewEngineEvents();
     this.refreshHud();
+
+    if (this.engine.state.outcome !== "none") {
+      return;
+    }
+
+    if (this.engine.state.turnOwner === "enemy") {
+      await this.runEnemyTurnsIfNeeded();
+    }
   }
 
   onSkipSpell() {
-    if (this.isAnimatingBoard) {
+    this.registerPlayerInteraction();
+    if (this.isInputBlocked()) {
       return;
     }
 
@@ -657,7 +1122,7 @@ export class PrototypeScene extends Phaser.Scene {
   }
 
   onRunReplay() {
-    if (this.isAnimatingBoard) {
+    if (this.isInputBlocked()) {
       return;
     }
 
@@ -670,11 +1135,12 @@ export class PrototypeScene extends Phaser.Scene {
     const replayEngine = this.engine.runReplay(this.savedReplay);
     const original = this.engine.getDebugSnapshot();
     const replay = replayEngine.getDebugSnapshot();
-    const identical = original.boardHash === replay.boardHash && original.enemy.hp === replay.enemy.hp && original.player.hp === replay.player.hp;
+    const identical =
+      original.boardHash === replay.boardHash &&
+      original.enemy.hp === replay.enemy.hp &&
+      original.player.hp === replay.player.hp;
 
-    this.engine.state.statusText = identical
-      ? "Replay verification passed (deterministic)."
-      : "Replay mismatch detected.";
+    this.engine.state.statusText = identical ? "Replay verification passed (deterministic)." : "Replay mismatch detected.";
     this.refreshHud();
   }
 
@@ -690,27 +1156,12 @@ export class PrototypeScene extends Phaser.Scene {
       return;
     }
 
-    this.createEngine(classId);
-    this.engine.state.statusText = `Started new run as ${classId}.`;
-
-    this.initBoardSprites();
-
-    if (this.hud) {
-      this.hud.destroy();
-      this.hud = null;
-    }
-    if (this.boardEffects) {
-      this.boardEffects.destroy();
-      this.boardEffects = null;
-    }
-
-    this.createHudSystems();
-    this.processNewEngineEvents();
-    this.refreshHud();
+    this.currentClass = classId;
+    this.resetRun();
   }
 
   async onTileTap(index) {
-    if (this.isAnimatingBoard || this.engine.state.gameOver) {
+    if (this.isInputBlocked()) {
       return;
     }
 
@@ -741,6 +1192,14 @@ export class PrototypeScene extends Phaser.Scene {
       return;
     }
 
+    if (!areAdjacent(this.selectedIndex, index, BOARD_WIDTH, BOARD_HEIGHT)) {
+      this.selectedIndex = index;
+      this.engine.state.statusText = "Selection moved.";
+      this.syncSelectionFrames();
+      this.refreshHud();
+      return;
+    }
+
     const indexA = this.selectedIndex;
     const indexB = index;
     this.selectedIndex = null;
@@ -763,19 +1222,19 @@ export class PrototypeScene extends Phaser.Scene {
 
     this.lockBoardInput();
     await this.animateResolvedSwap(result);
+    this.unlockBoardInput();
+
     this.processNewEngineEvents();
     this.refreshHud();
 
-    if (!this.engine.state.gameOver && this.engine.state.turnOwner === "enemy") {
-      const enemyTurn = this.engine.processEnemyTurn();
-      if (enemyTurn?.didMove && enemyTurn.resolved?.ok) {
-        await this.animateResolvedSwap(enemyTurn.resolved);
-      }
-
-      this.processNewEngineEvents();
+    if (this.engine.state.outcome !== "none") {
+      return;
     }
 
-    this.unlockBoardInput();
+    if (this.engine.state.turnOwner === "enemy") {
+      await this.runEnemyTurnsIfNeeded();
+    }
+
     this.engine.state.statusText = `Swap resolved: ${result.cascades.length} cascades.`;
     this.refreshHud();
   }
@@ -795,6 +1254,8 @@ export class PrototypeScene extends Phaser.Scene {
 
       if (type === "damage_application") {
         const dmg = payload.detail?.damage?.finalDamage ?? 0;
+        const byPlayer = payload.by === this.engine.state.player.name;
+
         if (dmg > 0) {
           const targetIsPlayer = payload.to === this.engine.state.player.name;
           this.boardEffects?.showDamage(dmg, targetIsPlayer ? "hero" : "enemy");
@@ -802,21 +1263,41 @@ export class PrototypeScene extends Phaser.Scene {
 
           if (targetIsPlayer) {
             this.hud?.setHeroState("hurt");
+          } else if (byPlayer && payload.detail?.type === "weapon_damage") {
+            this.hud?.setHeroState("attack");
           }
         }
-      }
 
-      if (type === "resource_change") {
-        const delta = payload.delta ?? {};
-        if ((delta.gold ?? 0) > 0) {
+        if (payload.detail?.type === "mana_gain") {
+          this.boardEffects?.showManaGain(payload.detail.gain ?? 0, byPlayer ? "hero" : "enemy");
+        }
+        if (payload.detail?.type === "armor_gain") {
+          this.boardEffects?.showArmorGain(payload.detail.gain ?? 0, byPlayer ? "hero" : "enemy");
+        }
+        if (payload.detail?.type === "gold_gain") {
+          this.boardEffects?.showGoldGain(payload.detail.gain ?? 0, "hero");
           this.hud?.setHeroState("coin");
-          this.hud?.pushCombatLog(`Gold +${delta.gold}`);
         }
       }
 
       if (type === "encounter_victory") {
         this.hud?.setHeroState("victory");
         this.hud?.pushCombatLog("Victory!");
+        this.showOutcomeModal({
+          mode: "victory",
+          title: "VICTORY",
+          body: "XP gained: 0\nGold found: 0",
+          buttonText: "Continue",
+        });
+      }
+
+      if (type === "encounter_defeat") {
+        this.showOutcomeModal({
+          mode: "defeat",
+          title: "YOU DIED",
+          body: "Your run has ended.",
+          buttonText: "Restart",
+        });
       }
 
       if (type === "encounter_start") {
@@ -863,7 +1344,21 @@ export class PrototypeScene extends Phaser.Scene {
         },
       });
 
-      this.hud.setTurnPhaseLabel(`${snapshot.turnOwner.toUpperCase()} - ${snapshot.turnPhase.toUpperCase()}`);
+      this.hud.setTurnPhaseLabel(`${capWord(snapshot.turnOwner)} Turn`);
+      this.hud.setTurnOwner(snapshot.turnOwner);
+
+      const shouldShowPhaseBanner =
+        snapshot.turnOwner === "player" &&
+        snapshot.outcome === "none" &&
+        !snapshot.pendingEncounterStart &&
+        !this.isAnimatingBoard &&
+        !this.isModalBlockingInput;
+
+      if (shouldShowPhaseBanner) {
+        this.hud.setPhaseBanner(snapshot.turnPhase === "spell" ? PHASE_BANNER.castText : PHASE_BANNER.swapText, true);
+      } else {
+        this.hud.setPhaseBanner("", false);
+      }
 
       if (this.activeEnemyId !== this.engine.state.enemy?.id) {
         this.activeEnemyId = this.engine.state.enemy?.id ?? null;
@@ -877,7 +1372,8 @@ export class PrototypeScene extends Phaser.Scene {
       [
         `status=${this.engine.state.statusText || "ready"}`,
         `seed=${snapshot.seed} class=${this.currentClass}`,
-        `turn=${snapshot.turnOwner}/${snapshot.turnPhase} anim=${this.isAnimatingBoard}`,
+        `turn=${snapshot.turnOwner}/${snapshot.turnPhase} outcome=${snapshot.outcome}`,
+        `anim=${this.isAnimatingBoard} modal=${this.isModalBlockingInput} intro=${snapshot.pendingEncounterStart}`,
         `boardHash=${snapshot.boardHash}`,
         `cascade=${snapshot.cascadeLevel} x${snapshot.cascadeMultiplier}`,
         `delta=${JSON.stringify(snapshot.resourceDelta)}`,

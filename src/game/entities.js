@@ -172,6 +172,7 @@ export function createEnemy(archetype, tier = 1) {
     type: "enemy",
     id: archetype.id,
     name: archetype.name,
+    lck: archetype.lck ?? 0,
     hp: Math.round(archetype.hp * hpScale),
     maxHp: Math.round(archetype.hp * hpScale),
     attack: Math.round(archetype.attack * atkScale),

@@ -120,7 +120,7 @@
         "y": 0.5
       }
     },
-    "portraits/warrior/cast": {
+    "portraits/warrior/attack": {
       "frame": {
         "x": 3,
         "y": 1953,
@@ -144,7 +144,7 @@
         "y": 0.5
       }
     },
-    "portraits/warrior/coin": {
+    "portraits/warrior/cast": {
       "frame": {
         "x": 3,
         "y": 2343,
@@ -168,7 +168,7 @@
         "y": 0.5
       }
     },
-    "portraits/warrior/hurt": {
+    "portraits/warrior/coin": {
       "frame": {
         "x": 3,
         "y": 2733,
@@ -192,7 +192,7 @@
         "y": 0.5
       }
     },
-    "portraits/warrior/idle": {
+    "portraits/warrior/hurt": {
       "frame": {
         "x": 3,
         "y": 3123,
@@ -216,7 +216,7 @@
         "y": 0.5
       }
     },
-    "portraits/warrior/lowhp": {
+    "portraits/warrior/idle": {
       "frame": {
         "x": 3,
         "y": 3513,
@@ -240,9 +240,33 @@
         "y": 0.5
       }
     },
-    "portraits/warrior/victory": {
+    "portraits/warrior/lowhp": {
       "frame": {
         "x": 393,
+        "y": 3,
+        "w": 384,
+        "h": 384
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 384,
+        "h": 384
+      },
+      "sourceSize": {
+        "w": 384,
+        "h": 384
+      },
+      "pivot": {
+        "x": 0.5,
+        "y": 0.5
+      }
+    },
+    "portraits/warrior/victory": {
+      "frame": {
+        "x": 783,
         "y": 3,
         "w": 384,
         "h": 384
@@ -271,7 +295,7 @@
     "image": "ui-portraits-atlas.png",
     "format": "RGBA8888",
     "size": {
-      "w": 1024,
+      "w": 2048,
       "h": 4096
     },
     "scale": 1

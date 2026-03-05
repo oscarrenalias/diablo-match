@@ -30,6 +30,10 @@ function actorView(actor) {
   };
 }
 
+function roll0to100(rng) {
+  return Math.floor(rng.next() * 101);
+}
+
 export function createGameEngine({ seed = "diablo-match-v2", classId = "warrior", logLevel = "INFO" } = {}) {
   const rng = createRng(seed);
   const logger = createEventLogger({ seed });
@@ -42,6 +46,9 @@ export function createGameEngine({ seed = "diablo-match-v2", classId = "warrior"
     board: createStartingBoard({ rng, weights: TILE_WEIGHTS, tileOrder: TILE_ORDER }),
     turnOwner: "player",
     turnPhase: "spell",
+    currentStarter: "player",
+    pendingEncounterStart: false,
+    outcome: "none",
     stepIndex: 0,
     replay: {
       seed,
@@ -76,48 +83,6 @@ export function createGameEngine({ seed = "diablo-match-v2", classId = "warrior"
     });
   }
 
-  function startEncounter() {
-    const archetype = state.encounterQueue[state.encounterIndex % state.encounterQueue.length];
-    const tier = 1 + state.encounterIndex;
-    state.enemy = createEnemy(archetype, tier);
-    state.board = createStartingBoard({ rng: state.rng, weights: TILE_WEIGHTS, tileOrder: TILE_ORDER });
-    state.turnOwner = "player";
-    state.turnPhase = "spell";
-    state.stepIndex += 1;
-
-    logEvent("encounter_start", {
-      encounterIndex: state.encounterIndex,
-      enemy: actorView(state.enemy),
-      player: actorView(state.player),
-    });
-  }
-
-  function finishIfNeeded() {
-    if (state.player.hp <= 0) {
-      state.gameOver = true;
-      state.statusText = "Defeat. Run ended.";
-      logEvent("run_end", {
-        reason: "player_dead",
-        metrics: { ...state.metrics },
-      });
-      return true;
-    }
-
-    if (state.enemy.hp <= 0) {
-      state.metrics.enemiesDefeated += 1;
-      logEvent("encounter_victory", {
-        encounterIndex: state.encounterIndex,
-        metrics: { ...state.metrics },
-      });
-      state.encounterIndex += 1;
-      startEncounter();
-      state.statusText = `${state.enemy.name} appears.`;
-      return false;
-    }
-
-    return false;
-  }
-
   function beginTurn(owner) {
     state.turnOwner = owner;
     state.turnPhase = owner === "player" ? "spell" : "swap";
@@ -142,6 +107,85 @@ export function createGameEngine({ seed = "diablo-match-v2", classId = "warrior"
       owner,
       actor: actorView(actor),
     });
+  }
+
+  function rollStartingOwner() {
+    const playerLck = state.player.attributes?.LCK ?? 0;
+    const enemyLck = state.enemy?.lck ?? 0;
+
+    const playerRollBase = roll0to100(state.rng);
+    const enemyRollBase = roll0to100(state.rng);
+
+    const playerRollTotal = playerRollBase + playerLck * 2;
+    const enemyRollTotal = enemyRollBase + enemyLck * 2;
+
+    const starter = playerRollTotal >= enemyRollTotal ? "player" : "enemy";
+
+    return {
+      playerLck,
+      enemyLck,
+      playerRollBase,
+      enemyRollBase,
+      playerRollTotal,
+      enemyRollTotal,
+      starter,
+    };
+  }
+
+  function startEncounter() {
+    const archetype = state.encounterQueue[state.encounterIndex % state.encounterQueue.length];
+    const tier = 1 + state.encounterIndex;
+    state.enemy = createEnemy(archetype, tier);
+    state.board = createStartingBoard({ rng: state.rng, weights: TILE_WEIGHTS, tileOrder: TILE_ORDER });
+    state.stepIndex += 1;
+    state.outcome = "none";
+    state.pendingEncounterStart = true;
+
+    const startRoll = rollStartingOwner();
+    state.currentStarter = startRoll.starter;
+    state.turnOwner = startRoll.starter;
+    state.turnPhase = startRoll.starter === "player" ? "spell" : "swap";
+
+    logEvent("encounter_start", {
+      encounterIndex: state.encounterIndex,
+      enemy: actorView(state.enemy),
+      player: actorView(state.player),
+      ...startRoll,
+    });
+
+    beginTurn(startRoll.starter);
+  }
+
+  function finishIfNeeded() {
+    if (state.player.hp <= 0) {
+      state.gameOver = true;
+      state.outcome = "defeat";
+      state.statusText = "Defeat. Run ended.";
+
+      logEvent("encounter_defeat", {
+        encounterIndex: state.encounterIndex,
+        metrics: { ...state.metrics },
+      });
+
+      logEvent("run_end", {
+        reason: "player_dead",
+        metrics: { ...state.metrics },
+      });
+      return true;
+    }
+
+    if (state.enemy.hp <= 0) {
+      state.metrics.enemiesDefeated += 1;
+      state.outcome = "victory";
+      state.statusText = "Victory. Continue when ready.";
+      logEvent("encounter_victory", {
+        encounterIndex: state.encounterIndex,
+        metrics: { ...state.metrics },
+      });
+      return true;
+    }
+
+    return false;
   }
 
   function resolveSwapByActor({ actor, opponent, indexA, indexB, origin }) {
@@ -177,6 +221,7 @@ export function createGameEngine({ seed = "diablo-match-v2", classId = "warrior"
 
     logEvent("match_found", { matchCount: result.matches.length });
 
+    const cascadeEffects = [];
     for (const cascade of result.cascades) {
       for (const group of cascade.matches) {
         const tileType = cascade.boardBefore[group[0]];
@@ -214,6 +259,13 @@ export function createGameEngine({ seed = "diablo-match-v2", classId = "warrior"
         });
       }
 
+      cascadeEffects.push({
+        level: cascade.level,
+        multiplier: cascade.multiplier,
+        resourceDelta: { ...effect.resourceDelta },
+        events: effect.events,
+      });
+
       state.debug.lastCascadeLevel = cascade.level;
       state.debug.lastCascadeMultiplier = cascade.multiplier;
       state.debug.resourceDelta = { ...effect.resourceDelta };
@@ -227,6 +279,7 @@ export function createGameEngine({ seed = "diablo-match-v2", classId = "warrior"
       boardBefore,
       boardAfter: cloneBoard(state.board),
       reshuffled: result.reshuffled,
+      cascadeEffects,
     });
 
     return {
@@ -242,7 +295,7 @@ export function createGameEngine({ seed = "diablo-match-v2", classId = "warrior"
   }
 
   function playerCastSpell(spellId) {
-    if (state.gameOver || state.turnOwner !== "player" || state.turnPhase !== "spell") {
+    if (state.gameOver || state.outcome !== "none" || state.turnOwner !== "player" || state.turnPhase !== "spell") {
       return { ok: false, reason: "not_spell_phase" };
     }
 
@@ -281,7 +334,7 @@ export function createGameEngine({ seed = "diablo-match-v2", classId = "warrior"
 
   function playerSwap(indexA, indexB, options = {}) {
     const { autoEnemyTurn = true } = options;
-    if (state.gameOver || state.turnOwner !== "player") {
+    if (state.gameOver || state.outcome !== "none" || state.turnOwner !== "player") {
       return { ok: false, reason: "not_player_turn" };
     }
 
@@ -354,12 +407,12 @@ export function createGameEngine({ seed = "diablo-match-v2", classId = "warrior"
   }
 
   function processEnemyTurn() {
-    if (state.gameOver || state.turnOwner !== "enemy") {
+    if (state.gameOver || state.outcome !== "none" || state.turnOwner !== "enemy") {
       return { ok: false, reason: "not_enemy_turn", didMove: false, didCastSpell: false };
     }
 
     const didCastSpell = enemyTrySpell();
-    if (state.gameOver) {
+    if (state.gameOver || state.outcome !== "none") {
       return { ok: true, didMove: false, didCastSpell, move: null, resolved: null };
     }
 
@@ -393,14 +446,34 @@ export function createGameEngine({ seed = "diablo-match-v2", classId = "warrior"
   }
 
   function skipSpellPhase(recordAction = true) {
-    if (state.turnOwner !== "player" || state.turnPhase !== "spell") {
+    if (state.outcome !== "none" || state.turnOwner !== "player" || state.turnPhase !== "spell") {
       return;
     }
+
     state.turnPhase = "swap";
     state.lastAction = "Spell phase skipped.";
     if (recordAction) {
       state.replay.actions.push({ type: "skip_spell_phase" });
     }
+  }
+
+  function markEncounterIntroShown() {
+    state.pendingEncounterStart = false;
+  }
+
+  function continueAfterVictory(recordAction = true) {
+    if (state.outcome !== "victory") {
+      return { ok: false, reason: "not_victory" };
+    }
+
+    state.encounterIndex += 1;
+    if (recordAction) {
+      state.replay.actions.push({ type: "continue_encounter" });
+    }
+
+    startEncounter();
+    state.statusText = `${state.enemy.name} appears.`;
+    return { ok: true };
   }
 
   function getDebugSnapshot() {
@@ -413,6 +486,9 @@ export function createGameEngine({ seed = "diablo-match-v2", classId = "warrior"
       cascadeLevel: state.debug.lastCascadeLevel,
       cascadeMultiplier: state.debug.lastCascadeMultiplier,
       resourceDelta: { ...state.debug.resourceDelta },
+      outcome: state.outcome,
+      pendingEncounterStart: state.pendingEncounterStart,
+      currentStarter: state.currentStarter,
       player: actorView(state.player),
       enemy: actorView(state.enemy),
     };
@@ -440,6 +516,8 @@ export function createGameEngine({ seed = "diablo-match-v2", classId = "warrior"
         replayEngine.skipSpellPhase(false);
       } else if (action.type === "swap") {
         replayEngine.playerSwap(action.indexA, action.indexB);
+      } else if (action.type === "continue_encounter") {
+        replayEngine.continueAfterVictory(false);
       }
 
       if (replayEngine.state.gameOver) {
@@ -451,7 +529,6 @@ export function createGameEngine({ seed = "diablo-match-v2", classId = "warrior"
   }
 
   startEncounter();
-  beginTurn("player");
 
   return {
     state,
@@ -459,6 +536,8 @@ export function createGameEngine({ seed = "diablo-match-v2", classId = "warrior"
     playerSwap,
     skipSpellPhase,
     processEnemyTurn,
+    markEncounterIntroShown,
+    continueAfterVictory,
     getDebugSnapshot,
     exportLogsJson,
     getReplayData,

@@ -34,6 +34,9 @@ export class CombatHUD {
     this.heroBaseState = "idle";
     this.currentHeroState = "idle";
 
+    this.activeTurnOwner = "player";
+    this.phaseBannerVisible = false;
+
     this.logLines = [];
 
     this.primarySpellHandler = null;
@@ -44,6 +47,7 @@ export class CombatHUD {
     this.layout(this.viewportRect());
     this.applyHeroState("idle");
     this.applyEnemyState("idle");
+    this.setTurnOwner("player");
   }
 
   viewportRect() {
@@ -69,7 +73,7 @@ export class CombatHUD {
     this.boardFrame = this.createFrameRect(100, 100, 0x111018, 0x4f4740).setDepth(this.depth - 1);
     this.boardFrame.setFillStyle(0x000000, 0);
 
-    this.turnStrip = this.createFrameRect(360, 42, 0x171720, 0x595461);
+    this.turnStrip = this.createFrameRect(300, 42, 0x171720, 0x595461);
     this.turnLabel = this.scene.add
       .text(0, 0, "", {
         fontFamily: "Trebuchet MS",
@@ -77,6 +81,16 @@ export class CombatHUD {
         color: "#dfddd7",
       })
       .setDepth(this.depth + 1)
+      .setOrigin(0.5);
+
+    this.phaseBannerStrip = this.createFrameRect(240, 34, 0x171720, 0x4f5e79).setDepth(this.depth + 1);
+    this.phaseBannerLabel = this.scene.add
+      .text(0, 0, "", {
+        fontFamily: "Trebuchet MS",
+        fontSize: "16px",
+        color: "#dce7ff",
+      })
+      .setDepth(this.depth + 2)
       .setOrigin(0.5);
 
     this.heroPortraitGlow = this.scene.add.circle(0, 0, 100, 0xffb36e, 0.08).setDepth(this.depth - 2);
@@ -136,13 +150,11 @@ export class CombatHUD {
   }
 
   createBarGroup() {
-    const bars = {
+    return {
       hp: this.createSingleBar("HP", 0xa53f3f, "#f0d7d7"),
       mana: this.createSingleBar("MANA", 0x3a66b9, "#d9e6ff"),
       armor: this.createSingleBar("ARMOR", 0x7d848d, "#eceef0"),
     };
-
-    return bars;
   }
 
   createSingleBar(label, fillColor, textColor) {
@@ -223,7 +235,7 @@ export class CombatHUD {
       return mapped;
     }
 
-    if (atlas && atlas.has(`portraits/skeleton/idle`)) {
+    if (atlas && atlas.has("portraits/skeleton/idle")) {
       return "skeleton";
     }
 
@@ -238,6 +250,54 @@ export class CombatHUD {
 
   setTurnPhaseLabel(text) {
     this.turnLabel.setText(text);
+  }
+
+  setPhaseBanner(text, visible = true) {
+    this.phaseBannerVisible = visible;
+    this.phaseBannerLabel.setText(text ?? "");
+    this.phaseBannerStrip.setVisible(visible);
+    this.phaseBannerLabel.setVisible(visible);
+  }
+
+  setTurnOwner(owner) {
+    this.activeTurnOwner = owner;
+
+    const isPlayer = owner === "player";
+
+    this.scene.tweens.killTweensOf(this.heroPortraitGlow);
+    this.scene.tweens.killTweensOf(this.enemyPortraitGlow);
+
+    if (isPlayer) {
+      this.heroPortraitFrame.setStrokeStyle(3, 0xe6ad69);
+      this.enemyPortraitFrame.setStrokeStyle(2, 0x474a57);
+      this.heroPortrait.setAlpha(1);
+      this.enemyPortrait.setAlpha(0.65);
+      this.heroPortraitGlow.setAlpha(0.2);
+      this.enemyPortraitGlow.setAlpha(0.04);
+
+      this.scene.tweens.add({
+        targets: this.heroPortraitGlow,
+        alpha: { from: 0.14, to: 0.24 },
+        duration: 580,
+        yoyo: true,
+        repeat: -1,
+      });
+    } else {
+      this.enemyPortraitFrame.setStrokeStyle(3, 0x8fdcac);
+      this.heroPortraitFrame.setStrokeStyle(2, 0x474a57);
+      this.enemyPortrait.setAlpha(1);
+      this.heroPortrait.setAlpha(0.65);
+      this.enemyPortraitGlow.setAlpha(0.2);
+      this.heroPortraitGlow.setAlpha(0.04);
+
+      this.scene.tweens.add({
+        targets: this.enemyPortraitGlow,
+        alpha: { from: 0.14, to: 0.24 },
+        duration: 580,
+        yoyo: true,
+        repeat: -1,
+      });
+    }
   }
 
   pushCombatLog(line) {
@@ -373,8 +433,13 @@ export class CombatHUD {
     this.boardFrame.setSize(boardRect.width + 20, boardRect.height + 20);
 
     this.turnStrip.setSize(300, 42);
-    this.turnStrip.setPosition(Math.round((viewportRect.width - 300) / 2), 14);
+    const turnStripY = Math.max(14, Math.round(boardRect.y - 52));
+    this.turnStrip.setPosition(Math.round((viewportRect.width - 300) / 2), turnStripY);
     this.turnLabel.setPosition(this.turnStrip.x + 150, this.turnStrip.y + 21);
+
+    this.phaseBannerStrip.setSize(240, 34);
+    this.phaseBannerStrip.setPosition(Math.round((viewportRect.width - 240) / 2), this.turnStrip.y + 46);
+    this.phaseBannerLabel.setPosition(this.phaseBannerStrip.x + 120, this.phaseBannerStrip.y + 17);
 
     let heroX;
     let heroY;
@@ -436,6 +501,9 @@ export class CombatHUD {
     this.logPanel.setSize(330, 120);
     this.logTitle.setPosition(this.logPanel.x + 10, this.logPanel.y + 8);
     this.logText.setPosition(this.logPanel.x + 10, this.logPanel.y + 30);
+
+    this.phaseBannerStrip.setVisible(this.phaseBannerVisible);
+    this.phaseBannerLabel.setVisible(this.phaseBannerVisible);
   }
 
   setVisible(visible) {
@@ -443,6 +511,8 @@ export class CombatHUD {
       this.boardFrame,
       this.turnStrip,
       this.turnLabel,
+      this.phaseBannerStrip,
+      this.phaseBannerLabel,
       this.heroPortraitGlow,
       this.enemyPortraitGlow,
       this.heroPortraitFrame,
@@ -473,6 +543,8 @@ export class CombatHUD {
       this.boardFrame,
       this.turnStrip,
       this.turnLabel,
+      this.phaseBannerStrip,
+      this.phaseBannerLabel,
       this.heroPortraitGlow,
       this.enemyPortraitGlow,
       this.heroPortraitFrame,
@@ -489,6 +561,9 @@ export class CombatHUD {
       ...Object.values(this.enemyBars).map((bar) => bar.container),
       ...this.spellButtons.map((btn) => btn.btn),
     ];
+
+    this.scene.tweens.killTweensOf(this.heroPortraitGlow);
+    this.scene.tweens.killTweensOf(this.enemyPortraitGlow);
 
     for (const node of nodes) {
       node.destroy();
