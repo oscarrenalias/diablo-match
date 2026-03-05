@@ -33,30 +33,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y imagemagick
-          if ! command -v magick >/dev/null 2>&1; then
-            sudo tee /usr/local/bin/magick >/dev/null <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-if [ "$#" -eq 0 ]; then
-  echo "magick shim: missing arguments" >&2
-  exit 2
-fi
-
-cmd="$1"
-shift
-
-case "$cmd" in
-  identify|convert|mogrify|composite|montage|compare|import|animate|stream|conjure)
-    exec "$cmd" "$@"
-    ;;
-  *)
-    # ImageMagick 7 supports `magick <input> ...`; ImageMagick 6 equivalent is `convert <input> ...`.
-    exec convert "$cmd" "$@"
-    ;;
-esac
-          EOF
-            sudo chmod +x /usr/local/bin/magick
+          if command -v magick >/dev/null 2>&1; then
+            magick -version
+          else
+            identify -version
+            convert -version
           fi
 
       - name: Install dependencies

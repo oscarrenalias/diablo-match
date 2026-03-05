@@ -10,15 +10,49 @@ const OUTPUT_DIR = path.resolve("assets/tiles");
 const TARGET_SIZE = 64;
 const MID_SIZE = 256;
 const FINAL_COLORS = 16;
+let imageMagickToolsPromise = null;
 
 function tileTypeFromFilename(fileName) {
   const match = /^tile_(.+)\.png$/i.exec(fileName);
   return match ? match[1].toLowerCase() : null;
 }
 
+async function resolveImageMagickTools() {
+  try {
+    await execFileAsync("magick", ["-version"]);
+    return {
+      identifyCommand: "magick",
+      identifyPrefix: ["identify"],
+      convertCommand: "magick",
+      convertPrefix: [],
+    };
+  } catch {}
+
+  try {
+    await execFileAsync("identify", ["-version"]);
+    await execFileAsync("convert", ["-version"]);
+    return {
+      identifyCommand: "identify",
+      identifyPrefix: [],
+      convertCommand: "convert",
+      convertPrefix: [],
+    };
+  } catch {}
+
+  throw new Error("ImageMagick is not available. Expected `magick` (IM7) or `identify`/`convert` (IM6).");
+}
+
+async function getImageMagickTools() {
+  if (!imageMagickToolsPromise) {
+    imageMagickToolsPromise = resolveImageMagickTools();
+  }
+  return imageMagickToolsPromise;
+}
+
 async function identifySquareSize(filePath) {
-  const { stdout } = await execFileAsync("magick", [
-    "identify",
+  const tools = await getImageMagickTools();
+  const { stdout } = await execFileAsync(tools.identifyCommand, [
+    ...tools.identifyPrefix,
     "-format",
     "%w %h",
     filePath,
@@ -36,6 +70,7 @@ async function identifySquareSize(filePath) {
 }
 
 async function processTile(sourcePath, outputPath) {
+  const tools = await getImageMagickTools();
   const squareSize = await identifySquareSize(sourcePath);
 
   const args = [
@@ -71,7 +106,7 @@ async function processTile(sourcePath, outputPath) {
     `PNG32:${outputPath}`,
   ];
 
-  await execFileAsync("magick", args);
+  await execFileAsync(tools.convertCommand, [...tools.convertPrefix, ...args]);
 }
 
 async function main() {
